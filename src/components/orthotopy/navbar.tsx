@@ -6,12 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Logo } from "./logo";
 
 const NAV_LINKS = [
-  { href: "#apps", label: "Apps" },
-  { href: "#categories", label: "Categories" },
+  { href: "#works", label: "Works" },
+  { href: "#creators", label: "Creators" },
   { href: "#publish", label: "Publish" },
 ];
 
-export function Navbar() {
+interface NavbarProps {
+  onPublish: () => void;
+}
+
+export function Navbar({ onPublish }: NavbarProps) {
   const { resolvedTheme, setTheme } = useTheme();
 
   return (
@@ -51,8 +55,8 @@ export function Navbar() {
               <Github className="size-4" aria-hidden="true" />
             </a>
           </Button>
-          <Button asChild size="sm" className="ml-1 hidden sm:inline-flex">
-            <a href="#publish">Submit an app</a>
+          <Button size="sm" className="ml-1 hidden sm:inline-flex" onClick={onPublish}>
+            Publish a work
           </Button>
         </div>
       </div>

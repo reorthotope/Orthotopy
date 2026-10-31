@@ -2,11 +2,11 @@ import { Logo } from "./logo";
 
 const FOOTER_COLUMNS = [
   {
-    title: "Store",
+    title: "Catalog",
     links: [
-      { label: "Apps", href: "#apps" },
-      { label: "Categories", href: "#categories" },
-      { label: "Submit an app", href: "#publish" },
+      { label: "Works", href: "#works" },
+      { label: "Creators", href: "#creators" },
+      { label: "Submit a work", href: "#publish" },
     ],
   },
   {
@@ -30,7 +30,7 @@ export function Footer() {
           <div className="max-w-xs">
             <Logo />
             <p className="mt-3 text-sm text-muted-foreground">
-              A free, open app store that puts every app in its right place.
+              A free, open publishing home that puts every work in its right place.
             </p>
           </div>
           <nav aria-label="Footer" className="grid grid-cols-2 gap-8 sm:gap-16">
@@ -58,7 +58,7 @@ export function Footer() {
         </div>
         <div className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center">
           <p>© 2026 Orthotopy contributors. Released under the MIT License.</p>
-          <p>Built with Next.js, Tailwind CSS and shadcn/ui.</p>
+          <p>Built with Next.js, Prisma, Tailwind CSS and shadcn/ui.</p>
         </div>
       </div>
     </footer>

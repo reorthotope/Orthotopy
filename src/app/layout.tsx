@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Providers } from "@/components/providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,17 +16,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Orthotopy — Every app in its right place",
+  title: "Orthotopy — Every work in its right place",
   description:
-    "Orthotopy is a free, open app store for indie software. Discover and install apps with no platform fees, no ads and no lock-in — or publish your own in minutes.",
-  keywords: ["Orthotopy", "app store", "open source", "indie apps", "free software"],
+    "Orthotopy is a free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",
+  keywords: ["Orthotopy", "publishing", "open source", "indie developers", "creators", "catalog"],
   authors: [{ name: "Orthotopy contributors" }],
   icons: {
     icon: "/orthotopy.svg",
   },
   openGraph: {
-    title: "Orthotopy — Every app in its right place",
-    description: "A free, open app store for indie software.",
+    title: "Orthotopy — Every work in its right place",
+    description: "A free, open publishing home for developers and creators.",
     siteName: "Orthotopy",
     type: "website",
   },
@@ -47,8 +48,10 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
-          {children}
-          <Toaster />
+          <Providers>
+            {children}
+            <Toaster />
+          </Providers>
         </ThemeProvider>
       </body>
     </html>
