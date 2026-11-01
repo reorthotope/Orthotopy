@@ -24,6 +24,10 @@ export const metadata: Metadata = {
   keywords: ["Orthotopy", "publishing", "open source", "indie developers", "creators", "catalog"],
   authors: [{ name: "Orthotopy contributors" }],
   applicationName: "Orthotopy",
+  // Google AdSense site-ownership verification.
+  other: {
+    "google-adsense-account": "ca-pub-7195646239757957",
+  },
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
