@@ -63,3 +63,10 @@ server.log
 /download/
 /tests/
 /.z-ai-config
+# Sandbox / workspace dirs (not part of the project)
+/db/
+/skills/
+/upload/
+/agent-ctx/
+/scripts/
+dev.log
