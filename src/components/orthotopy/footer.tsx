@@ -30,8 +30,7 @@ export function Footer() {
           <div className="max-w-xs">
             <Logo />
             <p className="mt-3 text-sm text-muted-foreground">
-              Orthotopy Store is a free, open publishing home that puts every work in its
-              right place.
+              A free, open publishing home that puts every work in its right place.
             </p>
           </div>
           <nav aria-label="Footer" className="grid grid-cols-2 gap-8 sm:gap-16">
@@ -58,7 +57,7 @@ export function Footer() {
           </nav>
         </div>
         <div className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center">
-          <p>© 2026 Orthotopy Store contributors. Released under the MIT License.</p>
+          <p>© 2026 Orthotopy contributors. Released under the MIT License.</p>
           <p>Built with Next.js, Prisma, Tailwind CSS and shadcn/ui.</p>
         </div>
       </div>

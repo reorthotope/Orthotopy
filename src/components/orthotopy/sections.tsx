@@ -25,7 +25,7 @@ const STEPS: { number: string; icon: LucideIcon; title: string; description: str
     icon: Upload,
     title: "Submit it",
     description:
-      "Send it as a pull request to the Orthotopy Store catalog, or use the Publish button on this page for the live demo flow.",
+      "Send it as a pull request to the Orthotopy catalog, or use the Publish button on this page for the live demo flow.",
   },
   {
     number: "03",

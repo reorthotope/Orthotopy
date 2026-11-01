@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-/** Kinds of publishers on Orthotopy Store. */
+/** Kinds of publishers on Orthotopy. */
 export const KINDS = ["Developer", "Creator"] as const;
 export type WorkKind = (typeof KINDS)[number];
 

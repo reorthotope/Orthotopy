@@ -17,12 +17,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Orthotopy Store — Every work in its right place",
+  title: "Orthotopy — Every work in its right place",
   description:
-    "Orthotopy Store is a free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",
-  keywords: ["Orthotopy Store", "Orthotopy", "publishing", "open source", "indie developers", "creators", "catalog"],
-  authors: [{ name: "Orthotopy Store contributors" }],
-  applicationName: "Orthotopy Store",
+    "Orthotopy is a free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",
+  keywords: ["Orthotopy", "publishing", "open source", "indie developers", "creators", "catalog"],
+  authors: [{ name: "Orthotopy contributors" }],
+  applicationName: "Orthotopy",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -33,13 +33,13 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Orthotopy Store",
+    title: "Orthotopy",
     statusBarStyle: "black-translucent",
   },
   openGraph: {
-    title: "Orthotopy Store — Every work in its right place",
+    title: "Orthotopy — Every work in its right place",
     description: "A free, open publishing home for developers and creators.",
-    siteName: "Orthotopy Store",
+    siteName: "Orthotopy",
     type: "website",
   },
 };

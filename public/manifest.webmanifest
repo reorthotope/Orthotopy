@@ -1,7 +1,7 @@
 {
-  "name": "Orthotopy Store — Every work in its right place",
-  "short_name": "Orthotopy Store",
-  "description": "Orthotopy Store is a free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",
+  "name": "Orthotopy — Every work in its right place",
+  "short_name": "Orthotopy",
+  "description": "A free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

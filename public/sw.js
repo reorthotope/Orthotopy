@@ -1,5 +1,5 @@
 /*
- * Orthotopy Store service worker.
+ * Orthotopy service worker.
  *
  * Strategy:
  *  - App shell (/, manifest, icons) is precached at install time.
@@ -9,7 +9,7 @@
  *  - API and other same-origin GETs go straight to the network (fresh data);
  *    failures simply fall through to the offline page shell.
  */
-const VERSION = "orthotopy-store-pwa-v1";
+const VERSION = "orthotopy-pwa-v1";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const STATIC_CACHE = `${VERSION}-static`;
@@ -92,11 +92,11 @@ self.addEventListener("fetch", (event) => {
       networkFirst(request, RUNTIME_CACHE, "/").catch(
         () =>
           new Response(
-            "<!doctype html><meta charset=\"utf-8\"><title>Orthotopy Store — offline</title>" +
+            "<!doctype html><meta charset=\"utf-8\"><title>Orthotopy — offline</title>" +
               "<body style=\"background:#0b120e;color:#e2e8e4;font-family:system-ui;" +
               "display:grid;place-items:center;min-height:100vh;text-align:center\">" +
               "<div><h1 style=\"font-size:1.4rem\">You're offline</h1>" +
-              "<p style=\"opacity:.7\">Orthotopy Store will reconnect automatically.</p></div>",
+              "<p style=\"opacity:.7\">Orthotopy will reconnect automatically.</p></div>",
             { headers: { "Content-Type": "text/html; charset=utf-8" } }
           )
       )

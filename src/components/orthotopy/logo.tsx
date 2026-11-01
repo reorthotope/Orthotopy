@@ -19,9 +19,7 @@ export function Logo({ className }: { className?: string }) {
         <circle cx="32" cy="33" r="13" fill="none" stroke="#34d399" strokeWidth="6.5" />
         <circle cx="47.5" cy="16.5" r="5.5" fill="#6ee7b7" />
       </svg>
-      <span className="text-lg font-semibold tracking-tight">
-        Orthotopy <span className="text-emerald-600 dark:text-emerald-400">Store</span>
-      </span>
+      <span className="text-lg font-semibold tracking-tight">Orthotopy</span>
     </span>
   );
 }

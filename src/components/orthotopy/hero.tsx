@@ -45,14 +45,14 @@ export function Hero({ query, onQueryChange, workCount, creatorCount, onPublish 
             <span className="text-emerald-600 dark:text-emerald-400">right place</span>
           </h1>
           <p className="mt-5 max-w-2xl text-pretty text-base text-muted-foreground sm:text-lg">
-            Orthotopy Store is a free, open publishing home for developers and creators. Ship
+            Orthotopy is a free, open publishing home for developers and creators. Ship
             apps, tools, games, music, design and words — hosted by you, listed here,
             with zero platform tax.
           </p>
           <form
             className="mt-8 flex w-full max-w-xl items-center gap-2"
             role="search"
-            aria-label="Search the Orthotopy Store catalog"
+            aria-label="Search the Orthotopy catalog"
             onSubmit={(event) => {
               event.preventDefault();
               document.getElementById("works")?.scrollIntoView({ behavior: "smooth" });
