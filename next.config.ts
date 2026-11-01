@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
-  /* config options here */
+  // Static export: the whole site is generated into ./out and can be hosted
+  // on any static platform (Cloudflare Pages, GitHub Pages, Netlify…).
+  output: "export",
   typescript: {
     ignoreBuildErrors: true,
   },

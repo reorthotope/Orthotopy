@@ -18,6 +18,7 @@ const FOOTER_COLUMNS = [
         label: "MIT License",
         href: "https://github.com/reorthotope/Orthotopy/blob/main/LICENSE",
       },
+      { label: "Privacy policy", href: "/privacy" },
     ],
   },
 ];

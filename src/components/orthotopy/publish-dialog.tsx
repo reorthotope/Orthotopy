@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,7 +21,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { CATEGORIES, KINDS, type Work } from "@/lib/works";
+import { CATEGORIES, CATEGORY_ICONS, KINDS, gradientFor } from "@/lib/works";
+
+const CATALOG_URL =
+  "https://github.com/reorthotope/Orthotopy/blob/main/public/catalog/works.json";
+const NEW_ISSUE_URL = "https://github.com/reorthotope/Orthotopy/issues/new";
 
 interface PublishDialogProps {
   open: boolean;
@@ -31,7 +34,6 @@ interface PublishDialogProps {
 
 export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
 
   const [title, setTitle] = useState("");
   const [creator, setCreator] = useState("");
@@ -42,44 +44,47 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
   const valid =
     title.trim().length >= 2 && creator.trim().length >= 2 && tagline.trim().length >= 4;
 
-  const publish = useMutation({
-    mutationFn: async (): Promise<{ work: Work }> => {
-      const res = await fetch("/api/works", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          tagline: tagline.trim(),
-          kind,
-          category,
-          creator: creator.trim(),
-        }),
-      });
-      if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(json?.error ?? "Publish failed");
-      }
-      return (await res.json()) as { work: Work };
-    },
-    onSuccess: ({ work }) => {
-      queryClient.invalidateQueries({ queryKey: ["works"] });
-      onOpenChange(false);
-      setTitle("");
-      setCreator("");
-      setTagline("");
-      toast({
-        title: "Work published",
-        description: `“${work.title}” is live in this demo catalog — real submissions ship via GitHub pull requests.`,
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Could not publish",
-        description: "Something went wrong on the way to the catalog — please try again.",
-        variant: "destructive",
-      });
-    },
-  });
+  /**
+   * The catalog is a static JSON file in the repository, so "publishing"
+   * opens a prefilled GitHub issue with the ready-to-merge JSON entry.
+   * Merging it (and redeploing) lists the work on the live site.
+   */
+  const publish = () => {
+    const entry = {
+      title: title.trim(),
+      tagline: tagline.trim(),
+      kind,
+      category,
+      creator: creator.trim(),
+      icon: CATEGORY_ICONS[category] ?? "sparkles",
+      gradient: gradientFor(title.trim()),
+    };
+    const body = [
+      "Please add this work to the Orthotopy catalog.",
+      "",
+      "Append the JSON object below to the `works` array in " +
+        "`public/catalog/works.json`, then merge and redeploy:",
+      "",
+      "```json",
+      JSON.stringify(entry, null, 2),
+      "```",
+      "",
+      `Catalog file: ${CATALOG_URL}`,
+    ].join("\n");
+    const url = `${NEW_ISSUE_URL}?title=${encodeURIComponent(
+      `[Publish] ${entry.title}`
+    )}&body=${encodeURIComponent(body)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    onOpenChange(false);
+    setTitle("");
+    setCreator("");
+    setTagline("");
+    toast({
+      title: "Opening GitHub",
+      description:
+        "Submit the prefilled issue (or turn it into a pull request) — once merged into the catalog, the work goes live.",
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,15 +92,15 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
         <DialogHeader>
           <DialogTitle>Publish a work</DialogTitle>
           <DialogDescription>
-            List your app, tool, game, music, design or writing. It appears in the catalog
-            immediately and is stored on this instance.
+            List your app, tool, game, music, design or writing. The catalog is open on
+            GitHub — submitting opens a prefilled issue with your listing.
           </DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (valid) publish.mutate();
+            if (valid) publish();
           }}
         >
           <div className="grid gap-2">
@@ -168,8 +173,8 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!valid || publish.isPending}>
-              {publish.isPending ? "Publishing…" : "Publish work"}
+            <Button type="submit" disabled={!valid}>
+              Continue on GitHub
             </Button>
           </DialogFooter>
         </form>

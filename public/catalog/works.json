@@ -1,0 +1,147 @@
+{
+  "works": [
+    {
+      "id": "lumberstack",
+      "title": "Lumberstack",
+      "tagline": "Project scaffolds and stack templates in one tiny CLI.",
+      "kind": "Developer",
+      "category": "Developer Tools",
+      "creator": "Arun Patel",
+      "icon": "terminal",
+      "gradient": "from-emerald-500 to-teal-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "night-garden",
+      "title": "Night Garden",
+      "tagline": "Forty hand-drawn botanical illustrations, free to remix.",
+      "kind": "Creator",
+      "category": "Visual Art",
+      "creator": "Yuki Aoyama",
+      "icon": "image",
+      "gradient": "from-rose-400 to-orange-500",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "hexably",
+      "title": "Hexably",
+      "tagline": "A hex-grid puzzle game with 200 handmade levels.",
+      "kind": "Developer",
+      "category": "Games",
+      "creator": "Mara Lindqvist",
+      "icon": "gamepad",
+      "gradient": "from-violet-500 to-fuchsia-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "lowtide-ep",
+      "title": "Lowtide EP",
+      "tagline": "Four ambient tracks recorded on a shoreline, CC-BY.",
+      "kind": "Creator",
+      "category": "Audio",
+      "creator": "Nia Okafor",
+      "icon": "music",
+      "gradient": "from-fuchsia-500 to-purple-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "notewell",
+      "title": "Notewell",
+      "tagline": "Markdown notes with end-to-end encrypted sync.",
+      "kind": "Developer",
+      "category": "Apps",
+      "creator": "Tomas Rivera",
+      "icon": "notebook",
+      "gradient": "from-amber-500 to-orange-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "papercut-ui",
+      "title": "Papercut UI",
+      "tagline": "A cut-paper design system with 120 components and tokens.",
+      "kind": "Creator",
+      "category": "Design",
+      "creator": "Ines Duarte",
+      "icon": "palette",
+      "gradient": "from-rose-500 to-pink-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "shieldpass",
+      "title": "Shieldpass",
+      "tagline": "Offline password vault with zero telemetry.",
+      "kind": "Developer",
+      "category": "Apps",
+      "creator": "Priya Raman",
+      "icon": "shield",
+      "gradient": "from-lime-500 to-emerald-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "field-notes-dolomites",
+      "title": "Field Notes: Dolomites",
+      "tagline": "A photo essay on alpine light, shot over three summers.",
+      "kind": "Creator",
+      "category": "Photography",
+      "creator": "Jonas Weber",
+      "icon": "camera",
+      "gradient": "from-teal-500 to-green-700",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "ledgerly",
+      "title": "Ledgerly",
+      "tagline": "Plain-text budgeting that never leaves your device.",
+      "kind": "Developer",
+      "category": "Developer Tools",
+      "creator": "Chen Wei",
+      "icon": "calculator",
+      "gradient": "from-green-500 to-emerald-700",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "sprite-foundry",
+      "title": "Sprite Foundry",
+      "tagline": "Five hundred pixel-art sprites for indie game jams.",
+      "kind": "Creator",
+      "category": "Assets",
+      "creator": "Dana Kovalenko",
+      "icon": "box",
+      "gradient": "from-orange-500 to-amber-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "waveline",
+      "title": "Waveline",
+      "tagline": "Studio-quality recorder and trimmer under 5 MB.",
+      "kind": "Developer",
+      "category": "Audio",
+      "creator": "Felix Moreau",
+      "icon": "waveform",
+      "gradient": "from-teal-500 to-emerald-600",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "the-lazy-virtual-machine",
+      "title": "The Lazy Virtual Machine",
+      "tagline": "An essay series on building interpreters that loaf.",
+      "kind": "Creator",
+      "category": "Writing",
+      "creator": "Sam Whitaker",
+      "icon": "book",
+      "gradient": "from-violet-500 to-purple-700",
+      "createdAt": 1793538210674
+    },
+    {
+      "id": "dw",
+      "title": "dW",
+      "tagline": "Eqdwq",
+      "kind": "Developer",
+      "category": "Apps",
+      "creator": "W54HEA",
+      "icon": "box",
+      "gradient": "from-rose-500 to-pink-600",
+      "createdAt": 1793538306225
+    }
+  ]
+}

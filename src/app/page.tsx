@@ -17,7 +17,7 @@ export default function Home() {
   const { data, isLoading } = useQuery({
     queryKey: ["works"],
     queryFn: async (): Promise<Work[]> => {
-      const res = await fetch("/api/works");
+      const res = await fetch("/catalog/works.json");
       if (!res.ok) throw new Error("Failed to load works");
       const json = (await res.json()) as { works: Work[] };
       return json.works;
