@@ -1,8 +1,8 @@
-# Orthotopy
+# Orthotopy Store
 
 > Every work in its right place — a free, open publishing home for developers and creators.
 
-Orthotopy is an open platform where developers and creators publish their works —
+Orthotopy Store is an open platform where developers and creators publish their works —
 apps, tools, games, music, design, writing — without platform fees, ads or
 gatekeeping. Works are hosted by their makers, listed in the open catalog, and
 publishing is a pull request (or the built-in publisher on the live demo).

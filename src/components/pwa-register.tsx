@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 
 /**
- * Registers the Orthotopy service worker in production builds.
+ * Registers the Orthotopy Store service worker in production builds.
  * No-ops in development so hot reload never fights the cache.
  */
 export function PwaRegister() {

@@ -21,7 +21,7 @@ export function Navbar({ onPublish }: NavbarProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/75 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
-        <a href="#top" aria-label="Orthotopy home" className="rounded-md">
+        <a href="#top" aria-label="Orthotopy Store home" className="rounded-md">
           <Logo />
         </a>
         <nav aria-label="Main navigation" className="hidden items-center gap-1 md:flex">
@@ -50,7 +50,7 @@ export function Navbar({ onPublish }: NavbarProps) {
               href="https://github.com/reorthotope/Orthotopy"
               target="_blank"
               rel="noreferrer"
-              aria-label="Orthotopy on GitHub"
+              aria-label="Orthotopy Store on GitHub"
             >
               <Github className="size-4" aria-hidden="true" />
             </a>
