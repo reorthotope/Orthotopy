@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { SearchX, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,18 +10,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
-import { ICONS, KINDS, type Work } from "@/lib/works";
+import { ICONS, type Work } from "@/lib/works";
 import { cn } from "@/lib/utils";
-
-interface WorksExplorerProps {
-  works: Work[];
-  isLoading: boolean;
-  query: string;
-  onQueryChange: (value: string) => void;
-}
-
-const KIND_FILTERS = ["All", ...KINDS] as const;
 
 export function KindBadge({ kind }: { kind: string }) {
   return (
@@ -101,137 +90,5 @@ export function LoadingGrid() {
         </li>
       ))}
     </ul>
-  );
-}
-
-export function WorksExplorer({ works, isLoading, query, onQueryChange }: WorksExplorerProps) {
-  const { toast } = useToast();
-  const [kind, setKind] = useState<string>("All");
-  const [category, setCategory] = useState<string>("All");
-
-  const categories = useMemo(
-    () => Array.from(new Set(works.map((work) => work.category))).sort(),
-    [works]
-  );
-
-  const normalized = query.trim().toLowerCase();
-  const filtered = works.filter((work) => {
-    const matchesKind = kind === "All" || work.kind === kind;
-    const matchesCategory = category === "All" || work.category === category;
-    const matchesQuery =
-      normalized.length === 0 ||
-      `${work.title} ${work.tagline} ${work.category} ${work.creator}`
-        .toLowerCase()
-        .includes(normalized);
-    return matchesKind && matchesCategory && matchesQuery;
-  });
-
-  const handleView = (work: Work) => {
-    toast({
-      title: "Demo work",
-      description: `Public pages for “${work.title}” are coming soon — this catalog is a preview for now.`,
-    });
-  };
-
-  return (
-    <section id="works" className="scroll-mt-20" aria-labelledby="works-heading">
-      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 id="works-heading" className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Fresh from the catalog
-            </h2>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Sample listings and works published on this instance.
-            </p>
-          </div>
-          <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
-            {isLoading ? "Loading catalog…" : `${filtered.length} of ${works.length} works`}
-            {normalized.length > 0 ? ` for \u201c${query.trim()}\u201d` : ""}
-          </p>
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by publisher kind">
-          {KIND_FILTERS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              aria-pressed={kind === k}
-              className={cn(
-                "rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-                kind === k
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
-              )}
-            >
-              {k === "All" ? "All kinds" : k}
-            </button>
-          ))}
-          <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
-          <button
-            type="button"
-            onClick={() => setCategory("All")}
-            aria-pressed={category === "All"}
-            className={cn(
-              "rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-              category === "All"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-          >
-            All categories
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCategory(c)}
-              aria-pressed={category === c}
-              className={cn(
-                "rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-                category === c
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground"
-              )}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-
-        {isLoading ? (
-          <LoadingGrid />
-        ) : filtered.length === 0 ? (
-          <div className="mt-10 flex flex-col items-center rounded-2xl border border-dashed py-16 text-center">
-            <SearchX className="size-8 text-muted-foreground" aria-hidden="true" />
-            <p className="mt-3 font-medium">No works match your search</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Try a different keyword or clear the filters.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-4"
-              onClick={() => {
-                onQueryChange("");
-                setKind("All");
-                setCategory("All");
-              }}
-            >
-              Clear filters
-            </Button>
-          </div>
-        ) : (
-          <ul className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filtered.map((work) => (
-              <li key={work.id}>
-                <WorkCard work={work} onView={handleView} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </section>
   );
 }

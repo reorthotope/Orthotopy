@@ -68,7 +68,7 @@ export function Navbar() {
             </a>
           </Button>
           <Button size="sm" className="ml-1" asChild>
-            <Link href="/join">Join Dev Team</Link>
+            <Link href="/dev">Join Dev Team</Link>
           </Button>
         </div>
       </div>

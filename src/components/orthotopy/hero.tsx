@@ -1,23 +1,47 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, Search, Sparkles } from "lucide-react";
+import { ArrowRight, GitCommitHorizontal, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 interface HeroProps {
-  query: string;
-  onQueryChange: (value: string) => void;
-  workCount: number;
-  creatorCount: number;
+  /** Distinct developers with at least one work in the catalog. */
+  activeDevelopers: number;
+  /** Distinct creators with at least one work in the catalog. */
+  activeCreators: number;
+  /** False while the catalog is still loading. */
+  statsReady: boolean;
   onPublish: () => void;
 }
 
-export function Hero({ query, onQueryChange, workCount, creatorCount, onPublish }: HeroProps) {
+const REPO_API = "https://api.github.com/repos/reorthotope/Orthotopy/commits";
+
+export function Hero({ activeDevelopers, activeCreators, statsReady, onPublish }: HeroProps) {
+  const [dailyCommits, setDailyCommits] = useState<number | null>(null);
+
+  // Daily commits are counted live from the public GitHub API and fall back
+  // to an em dash whenever the request fails or is rate limited.
+  useEffect(() => {
+    const since = new Date();
+    since.setUTCHours(0, 0, 0, 0);
+    const controller = new AbortController();
+    fetch(`${REPO_API}?since=${since.toISOString()}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((response) =>
+        response.ok ? response.json() : Promise.reject(new Error(String(response.status)))
+      )
+      .then((list) => setDailyCommits(Array.isArray(list) ? list.length : 0))
+      .catch(() => setDailyCommits(null));
+    return () => controller.abort();
+  }, []);
+
   const stats = [
-    { value: workCount > 0 ? `${workCount}` : "—", label: "works" },
-    { value: creatorCount > 0 ? `${creatorCount}` : "—", label: "creators" },
-    { value: "$0", label: "forever" },
+    { value: statsReady ? `${activeDevelopers}` : "—", label: "active developers" },
+    { value: statsReady ? `${activeCreators}` : "—", label: "active creators" },
+    { value: dailyCommits === null ? "—" : `${dailyCommits}`, label: "daily commits" },
   ];
 
   return (
@@ -49,35 +73,9 @@ export function Hero({ query, onQueryChange, workCount, creatorCount, onPublish 
             apps, tools, games, music, design and words — hosted by you, listed here,
             with zero platform tax.
           </p>
-          <form
-            className="mt-8 flex w-full max-w-xl items-center gap-2"
-            role="search"
-            aria-label="Search the Orthotopy catalog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              document.getElementById("works")?.scrollIntoView({ behavior: "smooth" });
-            }}
-          >
-            <div className="relative flex-1">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                value={query}
-                onChange={(event) => onQueryChange(event.target.value)}
-                placeholder="Search works, categories, creators…"
-                className="h-11 rounded-xl bg-card pl-9 text-base"
-                aria-label="Search works"
-              />
-            </div>
-            <Button type="submit" size="lg" className="h-11 rounded-xl">
-              Search
-            </Button>
-          </form>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Button asChild size="lg" className="h-11 rounded-xl">
-              <a href="#works">
+              <a href="#browse">
                 Browse works
                 <ArrowRight className="size-4" aria-hidden="true" />
               </a>
@@ -94,7 +92,15 @@ export function Hero({ query, onQueryChange, workCount, creatorCount, onPublish 
           <div className="mt-12 grid w-full max-w-xl grid-cols-3 divide-x divide-border rounded-2xl border bg-card/60 text-center">
             {stats.map((stat) => (
               <div key={stat.label} className="px-2 py-4">
-                <p className="text-xl font-semibold sm:text-2xl">{stat.value}</p>
+                <p className="flex items-center justify-center gap-1.5 text-xl font-semibold sm:text-2xl">
+                  {stat.label === "daily commits" ? (
+                    <GitCommitHorizontal
+                      className="size-4 text-muted-foreground sm:size-5"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {stat.value}
+                </p>
                 <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
               </div>
             ))}
