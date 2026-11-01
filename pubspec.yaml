@@ -1,0 +1,43 @@
+name: orthotopy
+description: "Orthotopy — every app in its right place. A free, open, cross-platform app store powered by GitHub Releases."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.5.0
+  provider: ^6.1.2
+  shared_preferences: ^2.5.3
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  image_path: "assets/brand/icon.png"
+  adaptive_icon_background: "#0A0F0D"
+  adaptive_icon_foreground: "assets/brand/icon-foreground.png"
+  windows:
+    generate: true
+    image_path: "assets/brand/icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/brand/icon.png"
+  linux:
+    generate: true
+    image_path: "assets/brand/icon.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - catalog/catalog.json
+    - assets/brand/
