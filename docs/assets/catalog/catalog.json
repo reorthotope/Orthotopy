@@ -1,0 +1,524 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-01",
+  "apps": [
+    {
+      "id": "orthotopy",
+      "name": "Orthotopy",
+      "tagline": "Every app in its right place.",
+      "description": "The official Orthotopy client — a free, open, cross-platform store for independent apps and games. Browse, search and install software published on GitHub Releases from one place. One Flutter codebase runs on Android, Windows, macOS, Linux and the web, and all platforms read the same live catalog so they always stay in sync.",
+      "category": "utilities",
+      "repo": "reorthotope/Orthotopy",
+      "developer": {
+        "name": "reorthotope",
+        "handle": "reorthotope"
+      },
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux",
+        "web"
+      ],
+      "tags": [
+        "store",
+        "open-source",
+        "flutter"
+      ],
+      "website": "https://reorthotope.github.io/Orthotopy/",
+      "latestVersion": null,
+      "releasedAt": "",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "url": "https://github.com/reorthotope/Orthotopy/releases/latest/download/Orthotopy-android.apk"
+          },
+          {
+            "platform": "windows",
+            "url": "https://github.com/reorthotope/Orthotopy/releases/latest/download/Orthotopy-windows-x64.zip"
+          },
+          {
+            "platform": "macos",
+            "url": "https://github.com/reorthotope/Orthotopy/releases/latest/download/Orthotopy-macos-universal.zip"
+          },
+          {
+            "platform": "linux",
+            "url": "https://github.com/reorthotope/Orthotopy/releases/latest/download/Orthotopy-linux-x64.tar.gz"
+          },
+          {
+            "platform": "web",
+            "url": "https://github.com/reorthotope/Orthotopy/releases/latest/download/Orthotopy-web.zip"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 0,
+        "downloads": 0
+      }
+    },
+    {
+      "id": "localsend",
+      "name": "LocalSend",
+      "tagline": "Share files with nearby devices over your own network.",
+      "description": "An open-source cross-platform alternative to AirDrop. LocalSend sends files, text and media to any device on the same Wi-Fi network — no internet connection or account required, everything stays on your LAN. Written in Flutter with end-to-end style simplicity: install on Android, Windows, macOS or Linux and they discover each other instantly.",
+      "category": "communication",
+      "repo": "localsend/localsend",
+      "developer": {
+        "name": "LocalSend Team",
+        "handle": "localsend"
+      },
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "file-sharing",
+        "cross-platform",
+        "privacy"
+      ],
+      "website": "https://localsend.org",
+      "latestVersion": "v1.18.2",
+      "releasedAt": "2026-08-21",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^LocalSend-.*-android-arm64v8\\.apk$"
+          },
+          {
+            "platform": "windows",
+            "assetRegex": "^LocalSend-.*-windows-x86-64\\.exe$"
+          },
+          {
+            "platform": "linux",
+            "assetRegex": "^LocalSend-.*-linux-x86-64\\.AppImage$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 96892,
+        "downloads": 2272958
+      }
+    },
+    {
+      "id": "mindustry",
+      "name": "Mindustry",
+      "tagline": "A tower-defense factory sandbox.",
+      "description": "A hybrid tower-defense and resource-management game: build supply chains, automate production and defend your core against waves of enemies. Fully open source, playable solo or in multiplayer across desktop and Android, with cross-platform saves and a built-in mod browser.",
+      "category": "games",
+      "repo": "Anuken/Mindustry",
+      "developer": {
+        "name": "Anuken",
+        "handle": "Anuken"
+      },
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "strategy",
+        "sandbox",
+        "multiplayer"
+      ],
+      "website": null,
+      "latestVersion": "v160.7",
+      "releasedAt": "2026-10-08",
+      "install": {
+        "targets": [
+          {
+            "platform": "linux",
+            "url": "https://github.com/Anuken/Mindustry/releases/latest/download/Mindustry.jar"
+          },
+          {
+            "platform": "windows",
+            "url": "https://github.com/Anuken/Mindustry/releases/latest/download/Mindustry.jar"
+          },
+          {
+            "platform": "macos",
+            "url": "https://github.com/Anuken/Mindustry/releases/latest/download/Mindustry.jar"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 29557,
+        "downloads": 20398
+      }
+    },
+    {
+      "id": "shattered-pixel-dungeon",
+      "name": "Shattered Pixel Dungeon",
+      "tagline": "The roguelike dungeon crawler, refined.",
+      "description": "A traditional roguelike based on the classic Pixel Dungeon: six heroes, procedurally generated dungeons, permadeath and turn-based combat. One of the most popular open-source games on mobile, with full desktop releases and touch- or keyboard-friendly controls.",
+      "category": "games",
+      "repo": "00-Evan/shattered-pixel-dungeon",
+      "developer": {
+        "name": "00-Evan",
+        "handle": "00-Evan"
+      },
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "roguelike",
+        "pixel-art",
+        "open-source"
+      ],
+      "website": "https://shatteredpixel.com",
+      "latestVersion": "v4.0.2",
+      "releasedAt": "2026-10-07",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^ShatteredPD-.*-Android\\.apk$"
+          },
+          {
+            "platform": "linux",
+            "assetRegex": "^ShatteredPD-.*-Linux\\.zip$"
+          },
+          {
+            "platform": "windows",
+            "assetRegex": "^ShatteredPD-.*-Windows\\.zip$"
+          },
+          {
+            "platform": "macos",
+            "assetRegex": "^ShatteredPD-.*-macOS\\.zip$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 6746,
+        "downloads": 14482
+      }
+    },
+    {
+      "id": "material-files",
+      "name": "Material Files",
+      "tagline": "A fast, beautiful file manager for Android.",
+      "description": "An open-source file manager for Android with proper Material Design: browse local storage and SFTP servers, extract archives, root support and a lightweight footprint. Known for being fast, private and faithful to Material You theming.",
+      "category": "utilities",
+      "repo": "zhanghai/MaterialFiles",
+      "developer": {
+        "name": "zhanghai",
+        "handle": "zhanghai"
+      },
+      "platforms": [
+        "android"
+      ],
+      "tags": [
+        "file-manager",
+        "material-design",
+        "sftp"
+      ],
+      "website": null,
+      "latestVersion": "v1.7.5",
+      "releasedAt": "2026-09-20",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^app-release-universal\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 9373,
+        "downloads": 61801
+      }
+    },
+    {
+      "id": "mihon",
+      "name": "Mihon",
+      "tagline": "Free and open-source manga reader for Android.",
+      "description": "A community-driven manga reader for Android: build a library from online sources or local files, track reading progress, and customize everything from reader modes to themes. Successor to the beloved Tachiyomi lineage, maintained by an open community.",
+      "category": "multimedia",
+      "repo": "mihonapp/mihon",
+      "developer": {
+        "name": "Mihon",
+        "handle": "mihonapp"
+      },
+      "platforms": [
+        "android"
+      ],
+      "tags": [
+        "manga",
+        "reader",
+        "open-source"
+      ],
+      "website": "https://mihon.app",
+      "latestVersion": "v0.21.3",
+      "releasedAt": "2026-10-25",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^mihon-v\\d+\\.\\d+\\.\\d+\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 24924,
+        "downloads": 385894
+      }
+    },
+    {
+      "id": "aves",
+      "name": "Aves",
+      "tagline": "A gorgeous gallery and photo manager for Android.",
+      "description": "Aves is a photo and video gallery for Android with powerful search, collections, maps and timeline views. It handles huge libraries smoothly, respects your privacy, and ships both a full and a Libre (F-Droid-style) build on every release.",
+      "category": "multimedia",
+      "repo": "deckerst/aves",
+      "developer": {
+        "name": "deckerst",
+        "handle": "deckerst"
+      },
+      "platforms": [
+        "android"
+      ],
+      "tags": [
+        "gallery",
+        "photos",
+        "privacy"
+      ],
+      "website": null,
+      "latestVersion": "v1.15.8",
+      "releasedAt": "2026-10-21",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^app-play-release\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 5476,
+        "downloads": 14566
+      }
+    },
+    {
+      "id": "unciv",
+      "name": "Unciv",
+      "tagline": "Open-source 4X civilization builder, tiny and fast.",
+      "description": "A remake of the classic Civ V experience in a 6 MB package: found cities, research techs, wage wars and win by science or culture. Runs everywhere Java does — including low-end phones — with hotseat, multiplayer and an active modding scene.",
+      "category": "games",
+      "repo": "yairm210/Unciv",
+      "developer": {
+        "name": "yairm210",
+        "handle": "yairm210"
+      },
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "4x",
+        "strategy",
+        "retro"
+      ],
+      "website": null,
+      "latestVersion": "4.22.16",
+      "releasedAt": "2026-10-31",
+      "install": {
+        "targets": [
+          {
+            "platform": "linux",
+            "url": "https://github.com/yairm210/Unciv/releases/latest/download/Unciv.jar"
+          },
+          {
+            "platform": "windows",
+            "url": "https://github.com/yairm210/Unciv/releases/latest/download/Unciv.jar"
+          },
+          {
+            "platform": "macos",
+            "url": "https://github.com/yairm210/Unciv/releases/latest/download/Unciv.jar"
+          },
+          {
+            "platform": "android",
+            "assetRegex": "^Unciv-.*\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 11516,
+        "downloads": 460
+      }
+    },
+    {
+      "id": "heliboard",
+      "name": "HeliBoard",
+      "tagline": "A private keyboard that doesn't phone home.",
+      "description": "An open-source keyboard for Android based on AOSP, with no network access at all: glide typing, clipboard history, emoji search and customizable themes run entirely on-device. The go-to choice for privacy-conscious typers.",
+      "category": "utilities",
+      "repo": "Helium314/HeliBoard",
+      "developer": {
+        "name": "Helium314",
+        "handle": "Helium314"
+      },
+      "platforms": [
+        "android"
+      ],
+      "tags": [
+        "keyboard",
+        "privacy",
+        "open-source"
+      ],
+      "website": null,
+      "latestVersion": "v4.2",
+      "releasedAt": "2026-10-12",
+      "install": {
+        "targets": [
+          {
+            "platform": "android",
+            "assetRegex": "^HeliBoard.*\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 6471,
+        "downloads": 30586
+      }
+    },
+    {
+      "id": "rustdesk",
+      "name": "RustDesk",
+      "tagline": "Open-source remote desktop, your own TeamViewer alternative.",
+      "description": "Remote desktop software written in Rust that works out of the box and can be self-hosted for full control. Connect to any machine from Windows, macOS, Linux or Android with file transfer and chat built in.",
+      "category": "utilities",
+      "repo": "rustdesk/rustdesk",
+      "developer": {
+        "name": "RustDesk",
+        "handle": "rustdesk"
+      },
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "remote-desktop",
+        "self-hosted",
+        "rust"
+      ],
+      "website": "https://rustdesk.com",
+      "latestVersion": "1.5.0",
+      "releasedAt": "2026-09-30",
+      "install": {
+        "targets": [
+          {
+            "platform": "windows",
+            "assetRegex": "^rustdesk-.*-x86_64\\.exe$"
+          },
+          {
+            "platform": "linux",
+            "assetRegex": "^rustdesk-.*\\.AppImage$"
+          },
+          {
+            "platform": "android",
+            "assetRegex": "^rustdesk-.*\\.apk$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 127762,
+        "downloads": 4907730
+      }
+    },
+    {
+      "id": "obs-studio",
+      "name": "OBS Studio",
+      "tagline": "Free streaming and recording for creators.",
+      "description": "The industry-standard tool for live streaming and screen recording. Scene composition, audio mixing, plugins and streaming to Twitch, YouTube and more — free and open source on every desktop platform.",
+      "category": "multimedia",
+      "repo": "obsproject/obs-studio",
+      "developer": {
+        "name": "OBS Project",
+        "handle": "obsproject"
+      },
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "streaming",
+        "recording",
+        "video"
+      ],
+      "website": "https://obsproject.com",
+      "latestVersion": "33.0.1",
+      "releasedAt": "2026-10-29",
+      "install": {
+        "targets": [
+          {
+            "platform": "windows",
+            "assetRegex": "^OBS-Studio-.*\\.exe$"
+          },
+          {
+            "platform": "macos",
+            "assetRegex": "^OBS-Studio-.*\\.dmg$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 78735,
+        "downloads": 58353
+      }
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "tagline": "A high-performance multiplayer code editor.",
+      "description": "A next-generation code editor written in Rust, built from the creators of Atom. GPU-accelerated rendering makes it feel instant, while first-class collaboration lets you pair-program with shared workspaces. Now open source on macOS, Linux and Windows.",
+      "category": "developer-tools",
+      "repo": "zed-industries/zed",
+      "developer": {
+        "name": "Zed Industries",
+        "handle": "zed-industries"
+      },
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "tags": [
+        "editor",
+        "rust",
+        "collaboration"
+      ],
+      "website": "https://zed.dev",
+      "latestVersion": "v1.26.2",
+      "releasedAt": "2026-10-28",
+      "install": {
+        "targets": [
+          {
+            "platform": "macos",
+            "assetRegex": "^Zed-.*\\.dmg$"
+          },
+          {
+            "platform": "linux",
+            "assetRegex": "^zed-linux-.*\\.tar\\.gz$"
+          },
+          {
+            "platform": "windows",
+            "assetRegex": "^Zed-.*\\.exe$"
+          }
+        ]
+      },
+      "stats": {
+        "stars": 92480,
+        "downloads": 346873
+      }
+    }
+  ]
+}
