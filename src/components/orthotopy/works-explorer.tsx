@@ -24,7 +24,7 @@ interface WorksExplorerProps {
 
 const KIND_FILTERS = ["All", ...KINDS] as const;
 
-function KindBadge({ kind }: { kind: string }) {
+export function KindBadge({ kind }: { kind: string }) {
   return (
     <span
       className={cn(
@@ -44,7 +44,7 @@ function WorkIcon({ iconKey }: { iconKey: string }) {
   return <Icon className="size-6" aria-hidden="true" />;
 }
 
-function WorkCard({ work, onView }: { work: Work; onView: (work: Work) => void }) {
+export function WorkCard({ work, onView }: { work: Work; onView: (work: Work) => void }) {
   return (
     <Card className="flex h-full flex-col transition-all hover:-translate-y-0.5 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5">
       <CardHeader className="flex-row items-start gap-3 space-y-0">
@@ -81,7 +81,7 @@ function WorkCard({ work, onView }: { work: Work; onView: (work: Work) => void }
   );
 }
 
-function LoadingGrid() {
+export function LoadingGrid() {
   return (
     <ul className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-hidden="true">
       {Array.from({ length: 8 }).map((_, index) => (
