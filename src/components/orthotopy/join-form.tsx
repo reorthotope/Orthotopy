@@ -8,7 +8,6 @@ import {
   Eye,
   EyeOff,
   MailCheck,
-  Smartphone,
   UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,11 +24,11 @@ import { cn } from "@/lib/utils";
 /**
  * Developer-portal application form.
  *
- * This is the placeholder build requested for the dev-team flow: every field
- * is validated and both verification flows (email code + phone OTP) are
- * simulated in the browser. Nothing is transmitted or stored anywhere yet —
- * the real backend (see the deploy notes) will replace the two `simulate`
- * handlers and the submit handler.
+ * This is the placeholder build requested for the dev-team flow: fields are
+ * validated in the browser and the email-code verification is simulated.
+ * Nothing is transmitted or stored anywhere yet — the real backend (Cloudflare
+ * Pages Functions + Brevo + KV + D1) will replace the `simulate` handler and
+ * the submit handler. Phone numbers are collected but not verified for now.
  */
 
 interface FormValues {
@@ -85,8 +84,6 @@ export function JoinDevForm() {
 
   const [emailSent, setEmailSent] = useState(false);
   const [emailCode, setEmailCode] = useState("");
-  const [phoneSent, setPhoneSent] = useState(false);
-  const [phoneOtp, setPhoneOtp] = useState("");
 
   const [submitted, setSubmitted] = useState(false);
 
@@ -98,7 +95,7 @@ export function JoinDevForm() {
       <p className="mt-1.5 text-xs text-destructive">{errors[field]}</p>
     ) : null;
 
-  // --- placeholder verification flows (swap these for the real backend) ---
+  // --- placeholder verification flow (swap this for the real backend) ---
   const sendEmailCode = () => {
     const emailErrors = validate({ ...values, ...EMPTY, email: values.email });
     if (emailErrors.email) {
@@ -109,21 +106,7 @@ export function JoinDevForm() {
     toast({
       title: "Demo mode — email code",
       description:
-        "A 6-digit code would now be sent to your inbox (planned: Resend, free tier). This preview simulates it — any 6 digits pass.",
-    });
-  };
-
-  const sendPhoneOtp = () => {
-    const phoneErrors = validate({ ...values, ...EMPTY, phone: values.phone });
-    if (phoneErrors.phone) {
-      toast({ title: "Check your phone number", description: phoneErrors.phone });
-      return;
-    }
-    setPhoneSent(true);
-    toast({
-      title: "Demo mode — SMS OTP",
-      description:
-        "A one-time password would now be texted to you (planned: Firebase Phone Auth free tier). This preview simulates it — any 6 digits pass.",
+        "A 6-digit code would now be sent to your inbox (planned: Brevo, free tier). This preview simulates it — any 6 digits pass.",
     });
   };
   // -------------------------------------------------------------------------
@@ -133,9 +116,6 @@ export function JoinDevForm() {
     const nextErrors = validate(values);
     if (emailCode.length !== 6) {
       nextErrors.emailCode = "Request a code and enter the 6 digits (demo: any 6 digits).";
-    }
-    if (phoneOtp.length !== 6) {
-      nextErrors.phoneOtp = "Request an OTP and enter the 6 digits (demo: any 6 digits).";
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -161,7 +141,7 @@ export function JoinDevForm() {
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
           This is the placeholder build, so nothing was sent or stored — your details
           never left this browser tab. When the verification backend lands, this exact
-          flow will create your dev-team application with real email codes and SMS OTPs.
+          flow will create your dev-team application with a real email code.
         </p>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
           Want a head start in the meantime? Contributors get noticed fast.
@@ -197,8 +177,9 @@ export function JoinDevForm() {
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
           We are putting together the team that builds and maintains Orthotopy — the
           catalog, the storefront and the open-source tooling behind it. Fill in the
-          application below; both verification steps are simulated for now, and no data
-          is sent or stored anywhere yet.
+          application below; email verification is simulated for now and no data is
+          sent or stored anywhere yet. Phone numbers are collected but not verified
+          for now.
         </p>
       </div>
 
@@ -282,7 +263,7 @@ export function JoinDevForm() {
               <div className="rounded-xl border border-dashed p-3">
                 <p className="text-xs text-muted-foreground">
                   Demo: enter any 6 digits — the real build mails a code with{" "}
-                  <strong>Resend</strong> (free tier).
+                  <strong>Brevo</strong> (free plan, 300 emails/day).
                 </p>
                 <InputOTP
                   maxLength={6}
@@ -312,58 +293,19 @@ export function JoinDevForm() {
 
           <div className="space-y-2">
             <Label htmlFor="phone">Phone number</Label>
-            <div className="flex gap-2">
-              <Input
-                id="phone"
-                type="tel"
-                value={values.phone}
-                onChange={(event) => set("phone")(event.target.value)}
-                placeholder="+1 555 000 1234"
-                autoComplete="tel"
-                className="flex-1"
-                aria-invalid={Boolean(errors.phone)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                onClick={sendPhoneOtp}
-              >
-                <Smartphone className="size-4" aria-hidden="true" />
-                {phoneSent ? "Resend OTP" : "Send OTP"}
-              </Button>
-            </div>
+            <Input
+              id="phone"
+              type="tel"
+              value={values.phone}
+              onChange={(event) => set("phone")(event.target.value)}
+              placeholder="+1 555 000 1234"
+              autoComplete="tel"
+              aria-invalid={Boolean(errors.phone)}
+            />
+            <p className="text-xs text-muted-foreground">
+              We only collect your number for now — SMS verification comes later.
+            </p>
             {fieldError("phone")}
-            {phoneSent ? (
-              <div className="rounded-xl border border-dashed p-3">
-                <p className="text-xs text-muted-foreground">
-                  Demo: enter any 6 digits — the real build sends an SMS OTP via{" "}
-                  <strong>Firebase Phone Auth</strong> (free tier).
-                </p>
-                <InputOTP
-                  maxLength={6}
-                  value={phoneOtp}
-                  onChange={setPhoneOtp}
-                  className="mt-2"
-                >
-                  <InputOTPGroup>
-                    <InputOTPSlot index={0} />
-                    <InputOTPSlot index={1} />
-                    <InputOTPSlot index={2} />
-                    <InputOTPSlot index={3} />
-                    <InputOTPSlot index={4} />
-                    <InputOTPSlot index={5} />
-                  </InputOTPGroup>
-                </InputOTP>
-                {errors.phoneOtp ? (
-                  <p className="mt-1.5 text-xs text-destructive">{errors.phoneOtp}</p>
-                ) : phoneOtp.length === 6 ? (
-                  <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                    Phone verified ✓ (demo)
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
           </div>
         </fieldset>
 
@@ -419,7 +361,7 @@ export function JoinDevForm() {
             Submit application
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            Placeholder build — nothing is transmitted or stored. Verification codes are
+            Placeholder build — nothing is transmitted or stored. Email verification is
             simulated in your browser.
           </p>
         </div>
