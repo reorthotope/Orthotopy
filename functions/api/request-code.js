@@ -44,7 +44,16 @@ export async function onRequestPost({ request, env }) {
   }
 
   const ip = request.headers.get("cf-connecting-ip") || undefined;
-  const human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, String(body?.turnstileToken ?? ""), ip);
+  const turnstileToken = String(body?.turnstileToken ?? "");
+  // Distinguish "never completed" (widget missing/blocked on this domain)
+  // from "completed but rejected" so the message actually helps.
+  if (env.TURNSTILE_SECRET_KEY && !turnstileToken) {
+    return json(
+      { error: "The human check didn't finish — refresh the page and try again." },
+      403
+    );
+  }
+  const human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, turnstileToken, ip);
   if (!human) {
     return json({ error: "Human check failed — refresh the page and try again." }, 403);
   }

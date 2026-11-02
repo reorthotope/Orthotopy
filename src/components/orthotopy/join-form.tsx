@@ -22,7 +22,7 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
-import { Turnstile } from "@/components/orthotopy/turnstile";
+import { Turnstile, TURNSTILE_ENABLED } from "@/components/orthotopy/turnstile";
 import { cn } from "@/lib/utils";
 import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verification";
 
@@ -276,7 +276,9 @@ export function JoinDevForm() {
   useEffect(() => {
     if (step !== "details") return;
     if (sending || sendError) return;
-    if (!allValid || !turnstileToken) return;
+    if (!allValid) return;
+    // Without a site key the human check is disabled — no token to wait for.
+    if (TURNSTILE_ENABLED && !turnstileToken) return;
     const emailKey = values.email.trim().toLowerCase();
     if (sentForRef.current === emailKey) {
       const t = setTimeout(() => setStep("code"), 150);
@@ -606,13 +608,15 @@ export function JoinDevForm() {
           </div>
         </fieldset>
 
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-4">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <ShieldCheck className="size-3.5" aria-hidden="true" />
-            Human check
-          </p>
-          <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
-        </div>
+        {TURNSTILE_ENABLED ? (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-4">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <ShieldCheck className="size-3.5" aria-hidden="true" />
+              Human check
+            </p>
+            <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
+          </div>
+        ) : null}
 
         <div className="space-y-3 border-t pt-6">
           {sendError ? (
@@ -635,7 +639,7 @@ export function JoinDevForm() {
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
               Sending your verification code to {values.email.trim().toLowerCase()}…
             </p>
-          ) : allValid && !turnstileToken ? (
+          ) : TURNSTILE_ENABLED && allValid && !turnstileToken ? (
             <p className="px-1 text-xs text-muted-foreground">
               Details look good — finish the human check above and your code goes
               out automatically.

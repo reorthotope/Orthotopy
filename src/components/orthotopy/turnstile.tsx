@@ -3,16 +3,21 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Cloudflare Turnstile widget.
+ * Cloudflare Turnstile widget — OPTIONAL.
  *
- * Site key resolution (build-time):
- *  - NEXT_PUBLIC_TURNSTILE_SITE_KEY when configured in the Pages environment
- *  - falls back to Cloudflare's always-passes test key so the form works in
- *    local dev and before the real widget is created
+ * The human check only exists when a site key is configured at build time
+ * (NEXT_PUBLIC_TURNSTILE_SITE_KEY). Without it the widget isn't rendered at
+ * all and the form flows without it — the API likewise skips verification
+ * while TURNSTILE_SECRET_KEY is unset. Keep the pair in sync in the Pages
+ * settings (build variable + variable must come from the SAME widget, and
+ * the widget's hostname list must include the domains it is served on).
  */
 
-const SITE_KEY =
-  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "1x00000000000000000000AA";
+export const TURNSTILE_ENABLED = Boolean(
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+);
+
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
 
 declare global {
   interface Window {
@@ -58,6 +63,7 @@ export function Turnstile({ onToken, resetSignal = 0 }: TurnstileProps) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!TURNSTILE_ENABLED) return;
     loadTurnstile()
       .then(() => {
         if (cancelled || !containerRef.current || !window.turnstile) return;
