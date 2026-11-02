@@ -5,7 +5,7 @@ import { JoinDevForm } from "@/components/orthotopy/join-form";
 export const metadata: Metadata = {
   title: "Join the Dev Team — Orthotopy",
   description:
-    "Apply to build and maintain Orthotopy — the catalog, the storefront and the open-source tooling behind it. Verify your email with a 6-character code.",
+    "Create your free Orthotopy developer account. Verify your email with a 6-character code — the code is sent automatically, no phone number needed.",
 };
 
 export default function DevPortalPage() {

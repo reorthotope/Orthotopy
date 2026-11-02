@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
+  ArrowLeft,
   AtSign,
   CheckCircle2,
-  ExternalLink,
   Eye,
   EyeOff,
   Loader2,
   MailCheck,
+  RotateCw,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,25 +23,29 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp";
 import { Turnstile } from "@/components/orthotopy/turnstile";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { CODE_PATTERN, normalizeCode } from "@/lib/verification";
+import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verification";
 
 /**
- * Developer-portal application form.
+ * Developer signup flow.
  *
- * Talks to the real backend: POST /api/request-code stores a 6-character
- * LLDDDD code in KV and emails it via Brevo (noreply@mail.orthotopy.us.ci);
- * POST /api/verify checks the code and creates the account row in D1.
- * The Turnstile widget uses the always-passing test key until
- * NEXT_PUBLIC_TURNSTILE_SITE_KEY is configured in the Pages environment.
+ * Step 1 — details: nickname, username (always lowercase, strict format),
+ * email, password + confirm. The verification code is sent automatically to
+ * the provided email the moment everything checks out (and the Turnstile
+ * human check has passed) — there is no "send" button to hunt for.
+ * Step 2 — verify: the 6-character LLDDDD code is checked automatically as
+ * soon as the sixth character is typed; a resend button (45s cooldown) and an
+ * "edit details" escape hatch are available.
+ * Step 3 — success: the account is created server-side (D1) and the visitor
+ * is handed off to /dashboard.
+ *
+ * API: POST /api/request-code (KV + Brevo), POST /api/verify (D1 users row).
  */
 
 interface FormValues {
   nickname: string;
   username: string;
   email: string;
-  phone: string;
   password: string;
   confirm: string;
 }
@@ -47,30 +54,28 @@ const EMPTY: FormValues = {
   nickname: "",
   username: "",
   email: "",
-  phone: "",
   password: "",
   confirm: "",
 };
 
+const AUTH_KEY = "orthotopy_dev_auth";
+const AUTH_EVENT = "orthotopy:auth";
 const RESEND_SECONDS = 45;
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const USERNAME_RE = /^[a-z0-9_](?:[a-z0-9_]{1,18}[a-z0-9_])?$/i;
-const PHONE_RE = /^\+?[0-9](?:[0-9\s-]{5,17})[0-9]$/;
+const USERNAME_HINT =
+  "a–z, 0–9, dots, hyphens and underscores — starts with a letter, ends with a letter or number.";
 
-function validate(values: FormValues): Record<string, string> {
+type Step = "details" | "code" | "done";
+
+function computeErrors(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {};
   if (values.nickname.trim().length < 2) {
     errors.nickname = "Tell us what to call you (at least 2 characters).";
   }
-  if (!USERNAME_RE.test(values.username.trim())) {
-    errors.username = "3–20 characters: letters, numbers and underscores only.";
-  }
+  const usernameReason = validateUsername(values.username);
+  if (usernameReason) errors.username = usernameReason;
   if (!EMAIL_RE.test(values.email.trim())) {
     errors.email = "Enter a valid email address, e.g. you@example.com.";
-  }
-  if (!PHONE_RE.test(values.phone.trim())) {
-    errors.phone = "Include the country code, e.g. +1 555 000 1234.";
   }
   if (values.password.length < 8) {
     errors.password = "Use at least 8 characters.";
@@ -81,40 +86,56 @@ function validate(values: FormValues): Record<string, string> {
   return errors;
 }
 
-interface ApiResponse {
+interface RequestCodeResponse {
   ok?: boolean;
   devCode?: string;
+  error?: string;
+}
+
+interface VerifyResponse {
+  ok?: boolean;
   error?: string;
   field?: string;
   fields?: Record<string, string>;
 }
 
-async function postJson(path: string, body: unknown) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as ApiResponse;
-  return { ok: res.ok, status: res.status, data };
-}
-
 export function JoinDevForm() {
-  const { toast } = useToast();
+  const router = useRouter();
+
+  const [step, setStep] = useState<Step>("details");
   const [values, setValues] = useState<FormValues>(EMPTY);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
 
-  const [emailSent, setEmailSent] = useState(false);
-  const [emailCode, setEmailCode] = useState("");
   const [sending, setSending] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sentEmail, setSentEmail] = useState("");
+  const [devCode, setDevCode] = useState<string | null>(null);
+
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [resendIn, setResendIn] = useState(0);
 
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileReset, setTurnstileReset] = useState(0);
 
-  const [submitted, setSubmitted] = useState(false);
+  const [alreadySignedIn, setAlreadySignedIn] = useState<string | null>(null);
+
+  // Refs keep async callbacks away from stale state.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const tokenRef = useRef(turnstileToken);
+  tokenRef.current = turnstileToken;
+  const sentEmailRef = useRef(sentEmail);
+  sentEmailRef.current = sentEmail;
+  const sendingRef = useRef(false);
+  const verifyingRef = useRef(false);
+  const sentForRef = useRef<string | null>(null); // email the last code was sent to
+
+  const errors = useMemo(() => computeErrors(values), [values]);
+  const allValid = Object.keys(errors).length === 0;
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -122,187 +143,356 @@ export function JoinDevForm() {
     return () => clearInterval(timer);
   }, [resendIn]);
 
-  const set = (field: keyof FormValues) => (value: string) =>
-    setValues((prev) => ({ ...prev, [field]: value }));
+  // Signed-in banner (e.g. a developer opening /dev again).
+  useEffect(() => {
+    const read = () => {
+      try {
+        const raw = localStorage.getItem(AUTH_KEY);
+        if (!raw) return setAlreadySignedIn(null);
+        const parsed = JSON.parse(raw) as { username?: string };
+        setAlreadySignedIn(parsed.username || null);
+      } catch {
+        setAlreadySignedIn(null);
+      }
+    };
+    read();
+    window.addEventListener(AUTH_EVENT, read);
+    window.addEventListener("storage", read);
+    return () => {
+      window.removeEventListener(AUTH_EVENT, read);
+      window.removeEventListener("storage", read);
+    };
+  }, []);
 
-  const fieldError = (field: keyof FormValues) =>
-    errors[field] ? (
-      <p className="mt-1.5 text-xs text-destructive">{errors[field]}</p>
-    ) : null;
-
-  const sendEmailCode = async () => {
-    const emailErrors = validate({ ...values, ...EMPTY, email: values.email });
-    if (emailErrors.email) {
-      toast({ title: "Check your email", description: emailErrors.email });
-      return;
-    }
-    if (!turnstileToken) {
-      toast({
-        title: "Almost there",
-        description: "Complete the human check first, then tap Send code.",
-      });
-      return;
-    }
+  const sendCode = useCallback(async (emailKey: string) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
+    setSendError(null);
     try {
-      const { ok, data } = await postJson("/api/request-code", {
-        email: values.email.trim(),
-        turnstileToken,
+      const res = await fetch("/api/request-code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: emailKey, turnstileToken: tokenRef.current }),
       });
-      if (ok) {
-        setEmailSent(true);
-        setEmailCode("");
+      const data = (await res.json().catch(() => ({}))) as RequestCodeResponse;
+      if (res.ok && data.ok) {
+        sentForRef.current = emailKey;
+        setSentEmail(emailKey);
+        setCode("");
+        setVerifyError(null);
         setResendIn(RESEND_SECONDS);
-        setTurnstileReset((n) => n + 1);
-        toast({
-          title: "Code sent",
-          description: `We emailed a 6-character code to ${values.email.trim()}. It expires in 10 minutes — check spam too.`,
-        });
+        if (data.devCode) setDevCode(data.devCode);
+        setValues((prev) => ({ ...prev, email: emailKey }));
+        setTurnstileReset((n) => n + 1); // mint a fresh token for the next send
+        setStep("code");
       } else {
-        toast({
-          title: "Couldn't send the code",
-          description: data.error ?? "Please try again in a moment.",
-        });
+        setSendError(
+          data.error ||
+            "We couldn't send the code right now — please try again in a moment."
+        );
       }
     } catch {
-      toast({
-        title: "Network error",
-        description: "Could not reach the server — check your connection and try again.",
-      });
+      setSendError(
+        "Network error — we couldn't reach the server. Check your connection and try again."
+      );
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
-  };
+  }, []);
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (submitting) return;
-    const nextErrors = validate(values);
-    if (!emailSent) {
-      nextErrors.emailCode = "Request a code first — tap Send code.";
-    } else if (!CODE_PATTERN.test(emailCode)) {
-      nextErrors.emailCode = "Enter the 6-character code: 2 letters then 4 digits.";
-    } else if (!turnstileToken) {
-      nextErrors.emailCode = "Complete the human check, then submit again.";
-    }
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) {
-      toast({
-        title: "Almost there",
-        description: "Fix the highlighted fields and submit again.",
-      });
-      return;
-    }
-    setSubmitting(true);
+  const verifyCode = useCallback(async (codeValue: string) => {
+    if (verifyingRef.current) return;
+    verifyingRef.current = true;
+    setVerifying(true);
+    setVerifyError(null);
     try {
-      const { ok, status, data } = await postJson("/api/verify", {
-        email: values.email.trim(),
-        code: emailCode,
-        nickname: values.nickname.trim(),
-        username: values.username.trim(),
-        phone: values.phone.trim(),
-        password: values.password,
-        turnstileToken,
+      const v = valuesRef.current;
+      const res = await fetch("/api/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: sentEmailRef.current,
+          code: codeValue,
+          nickname: v.nickname.trim(),
+          username: v.username.trim().toLowerCase(),
+          password: v.password,
+        }),
       });
-      if (ok) {
-        setSubmitted(true);
+      const data = (await res.json().catch(() => ({}))) as VerifyResponse;
+      if (res.ok && data.ok) {
+        try {
+          localStorage.setItem(
+            AUTH_KEY,
+            JSON.stringify({
+              nickname: v.nickname.trim(),
+              username: v.username.trim().toLowerCase(),
+              email: sentEmailRef.current,
+              createdAt: new Date().toISOString(),
+            })
+          );
+          window.dispatchEvent(new Event(AUTH_EVENT));
+        } catch {
+          // Storage unavailable (private mode) — the dashboard gate handles it.
+        }
+        setStep("done");
         return;
       }
-      setTurnstileReset((n) => n + 1);
-      if (status === 400 && data.field === "code") {
-        setErrors((prev) => ({ ...prev, emailCode: data.error ?? "That code doesn't match." }));
-        toast({ title: "Almost there", description: data.error ?? "Check the code and try again." });
-      } else if (data.field && data.error) {
-        setErrors((prev) => ({ ...prev, [data.field as string]: data.error as string }));
-        toast({ title: "Almost there", description: data.error });
-      } else if (data.fields) {
-        setErrors((prev) => ({ ...prev, ...data.fields }));
-        toast({ title: "Almost there", description: data.error ?? "Fix the highlighted fields." });
-      } else {
-        toast({
-          title: "Submission failed",
-          description: data.error ?? "Please try again in a moment.",
+      setCode("");
+      if (data.fields?.username || data.fields?.email) {
+        setServerErrors({
+          ...(data.fields.username ? { username: data.fields.username } : {}),
+          ...(data.fields.email ? { email: data.fields.email } : {}),
         });
+        setStep("details");
+        return;
       }
+      setVerifyError(
+        data.error || "Verification failed — please try again in a moment."
+      );
     } catch {
-      toast({
-        title: "Network error",
-        description: "Could not reach the server — check your connection and try again.",
-      });
+      setCode("");
+      setVerifyError(
+        "Network error — we couldn't reach the server. Check your connection and try again."
+      );
     } finally {
-      setSubmitting(false);
+      verifyingRef.current = false;
+      setVerifying(false);
     }
+  }, []);
+
+  // Auto-send: the moment every field is valid (and the human check passed),
+  // the code goes out — no button press required. Editing the email later
+  // triggers a fresh send; if the code for this address was already sent we
+  // simply return to the verify step.
+  useEffect(() => {
+    if (step !== "details") return;
+    if (sending || sendError) return;
+    if (!allValid || !turnstileToken) return;
+    const emailKey = values.email.trim().toLowerCase();
+    if (sentForRef.current === emailKey) {
+      const t = setTimeout(() => setStep("code"), 150);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => void sendCode(emailKey), 600);
+    return () => clearTimeout(t);
+  }, [step, allValid, turnstileToken, values.email, sending, sendError, sendCode]);
+
+  // Auto-verify: check as soon as the sixth character lands.
+  useEffect(() => {
+    if (step !== "code" || verifyingRef.current) return;
+    if (!CODE_PATTERN.test(code)) return;
+    void verifyCode(code);
+  }, [step, code, verifyCode]);
+
+  // Hand off to the dashboard after the success screen.
+  useEffect(() => {
+    if (step !== "done") return;
+    const t = setTimeout(() => router.replace("/dashboard"), 1800);
+    return () => clearTimeout(t);
+  }, [step, router]);
+
+  const update = (field: keyof FormValues) => (value: string) => {
+    setServerErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+    setValues((prev) => ({ ...prev, [field]: value }));
   };
 
-  const startNewApplication = () => {
-    setValues(EMPTY);
-    setErrors({});
-    setEmailSent(false);
-    setEmailCode("");
-    setResendIn(0);
-    setTurnstileToken("");
-    setSubmitted(false);
+  const markTouched = (field: keyof FormValues) => () =>
+    setTouched((prev) => ({ ...prev, [field]: true }));
+
+  const fieldError = (field: keyof FormValues) => {
+    const message = serverErrors[field] || (touched[field] ? errors[field] : undefined);
+    return message ? (
+      <p className="mt-1.5 text-xs text-destructive">{message}</p>
+    ) : null;
   };
 
-  if (submitted) {
+  const handleDetailsSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setTouched({ nickname: true, username: true, email: true, password: true, confirm: true });
+    if (!allValid) return;
+    const emailKey = values.email.trim().toLowerCase();
+    if (sentForRef.current === emailKey) {
+      setStep("code");
+      return;
+    }
+    void sendCode(emailKey);
+  };
+
+  const handleResend = () => {
+    if (sending || resendIn > 0 || !sentEmail) return;
+    void sendCode(sentEmail);
+  };
+
+  // ---------------------------------------------------------------- success
+  if (step === "done") {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col items-center px-4 py-20 text-center sm:px-6 sm:py-24">
         <span className="flex size-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="size-7" aria-hidden="true" />
         </span>
         <h1 className="mt-6 text-3xl font-bold tracking-tight sm:text-4xl">
-          Application received, {values.nickname.trim()}!
+          Account created!
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-          Your dev-team application is in — we verified{" "}
-          <strong className="text-foreground">{values.email.trim()}</strong> and saved your
-          spot. We&#39;ll reach out with next steps. In the meantime, contributors get
-          noticed fast.
+          Welcome to Orthotopy, {values.nickname.trim()}.{" "}
+          <strong className="text-foreground">{values.email.trim()}</strong> is
+          verified and your developer dashboard is ready.
         </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Button asChild>
-            <a
-              href="https://github.com/reorthotope/Orthotopy/issues"
-              target="_blank"
-              rel="noreferrer"
+        <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          Taking you to your dashboard…
+        </p>
+        <Button className="mt-8" onClick={() => router.replace("/dashboard")}>
+          Go to your dashboard now
+        </Button>
+      </div>
+    );
+  }
+
+  // ------------------------------------------------------------------ step 2
+  if (step === "code") {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
+        <div className="max-w-2xl">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            Developer portal — step 2 of 2
+          </span>
+          <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
+            Check your inbox
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
+            We emailed a 6-character verification code (2 letters + 4 digits,
+            like <strong className="font-mono text-foreground">XK4831</strong>)
+            to <strong className="text-foreground">{sentEmail}</strong>. It
+            expires in 10 minutes — check spam too.
+          </p>
+        </div>
+
+        <div className="mt-8 space-y-6 rounded-2xl border bg-card p-6 sm:p-8">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <MailCheck className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold">Enter the code from your email</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                We verify automatically the moment you type the sixth character.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <InputOTP
+              maxLength={6}
+              value={code}
+              onChange={(value) => setCode(normalizeCode(value))}
+              disabled={verifying}
+              className="flex-wrap"
             >
-              Say hi on GitHub
-              <ExternalLink className="size-4" aria-hidden="true" />
-            </a>
-          </Button>
-          <Button variant="outline" onClick={startNewApplication}>
-            Start a new application
-          </Button>
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+                <InputOTPSlot index={4} />
+                <InputOTPSlot index={5} />
+              </InputOTPGroup>
+            </InputOTP>
+            {verifying ? (
+              <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                Verifying your code…
+              </p>
+            ) : verifyError ? (
+              <p className="mt-3 text-xs text-destructive" role="alert">
+                {verifyError}
+              </p>
+            ) : null}
+          </div>
+
+          {devCode ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+              <strong>DEV MODE</strong> — the email service isn&#39;t configured, so
+              your code is{" "}
+              <strong className="font-mono text-base tracking-widest">{devCode}</strong>
+              . This banner only appears in local development.
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-3 border-t pt-5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleResend}
+              disabled={sending || resendIn > 0}
+            >
+              {sending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCw className="size-4" aria-hidden="true" />
+              )}
+              {sending ? "Sending…" : resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setCode("");
+                setVerifyError(null);
+                setStep("details");
+              }}
+            >
+              <ArrowLeft className="size-4" aria-hidden="true" />
+              Edit details
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Wrong address? Tap <strong>Edit details</strong> — a fresh code is sent
+            automatically once everything checks out again.
+          </p>
         </div>
       </div>
     );
   }
 
+  // ------------------------------------------------------------------ step 1
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
       <div className="max-w-2xl">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          Developer portal — applications open
+          Developer portal — step 1 of 2
         </span>
         <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
           Join the Dev Team
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          We are putting together the team that builds and maintains Orthotopy — the
-          catalog, the storefront and the open-source tooling behind it. Fill in the
-          application below and verify your email with a 6-character code (2 letters +
-          4 digits); codes expire in 10 minutes. Phone numbers are collected but not
-          verified for now.
+          Create your free developer account — publish and manage works across the
+          Orthotopy catalog. We&#39;ll email a 6-character code (2 letters + 4
+          digits) to verify your address; no phone number needed.
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        noValidate
-        className="mt-8 space-y-8 rounded-2xl border bg-card p-6 sm:p-8"
-      >
-        <fieldset className="space-y-5" disabled={submitting}>
-          <legend className="text-sm font-semibold">Profile</legend>
+      {alreadySignedIn ? (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
+          <span>
+            You&#39;re signed in as{" "}
+            <strong className="text-foreground">@{alreadySignedIn}</strong>.
+          </span>
+          <Button variant="outline" size="sm" asChild>
+            <a href="/dashboard">Open dashboard</a>
+          </Button>
+        </div>
+      ) : null}
+
+      <form onSubmit={handleDetailsSubmit} noValidate className="mt-8 space-y-6 rounded-2xl border bg-card p-6 sm:p-8">
+        <fieldset className="space-y-5" disabled={sending}>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="nickname">Nickname</Label>
@@ -314,11 +504,12 @@ export function JoinDevForm() {
                 <Input
                   id="nickname"
                   value={values.nickname}
-                  onChange={(event) => set("nickname")(event.target.value)}
+                  onChange={(event) => update("nickname")(event.target.value)}
+                  onBlur={markTouched("nickname")}
                   placeholder="Kite"
                   autoComplete="nickname"
                   className="pl-9"
-                  aria-invalid={Boolean(errors.nickname)}
+                  aria-invalid={Boolean(serverErrors.nickname || (touched.nickname && errors.nickname))}
                 />
               </div>
               {fieldError("nickname")}
@@ -333,111 +524,40 @@ export function JoinDevForm() {
                 <Input
                   id="username"
                   value={values.username}
-                  onChange={(event) => set("username")(event.target.value)}
-                  placeholder="kite_dev"
+                  onChange={(event) => update("username")(event.target.value.toLowerCase())}
+                  onBlur={markTouched("username")}
+                  placeholder="kite.dev"
                   autoComplete="username"
+                  spellCheck={false}
                   className="pl-9"
-                  aria-invalid={Boolean(errors.username)}
+                  aria-invalid={Boolean(serverErrors.username || (touched.username && errors.username))}
                 />
               </div>
-              {fieldError("username")}
+              {fieldError("username") ?? (
+                <p className="mt-1.5 text-xs text-muted-foreground">{USERNAME_HINT}</p>
+              )}
             </div>
           </div>
-        </fieldset>
-
-        <fieldset className="space-y-5" disabled={submitting}>
-          <legend className="text-sm font-semibold">Contact &amp; verification</legend>
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <div className="flex gap-2">
-              <Input
-                id="email"
-                type="email"
-                value={values.email}
-                onChange={(event) => set("email")(event.target.value)}
-                placeholder="you@example.com"
-                autoComplete="email"
-                className="flex-1"
-                aria-invalid={Boolean(errors.email)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                onClick={sendEmailCode}
-                disabled={sending || resendIn > 0}
-              >
-                {sending ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <MailCheck className="size-4" aria-hidden="true" />
-                )}
-                {sending
-                  ? "Sending…"
-                  : resendIn > 0
-                    ? `Resend in ${resendIn}s`
-                    : emailSent
-                      ? "Resend code"
-                      : "Send code"}
-              </Button>
-            </div>
-            {fieldError("email")}
-            <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
-            {emailSent ? (
-              <div className="rounded-xl border border-dashed p-3">
-                <p className="text-xs text-muted-foreground">
-                  We emailed a 6-character code (2 letters + 4 digits, like{" "}
-                  <strong className="font-mono text-foreground">XK4831</strong>) to{" "}
-                  <strong className="text-foreground">{values.email.trim()}</strong>. It
-                  expires in 10 minutes — check spam too.
-                </p>
-                <InputOTP
-                  maxLength={6}
-                  value={emailCode}
-                  onChange={(value) => setEmailCode(normalizeCode(value))}
-                  className="mt-2"
-                >
-                  <InputOTPGroup>
-                    <InputOTPSlot index={0} />
-                    <InputOTPSlot index={1} />
-                    <InputOTPSlot index={2} />
-                    <InputOTPSlot index={3} />
-                    <InputOTPSlot index={4} />
-                    <InputOTPSlot index={5} />
-                  </InputOTPGroup>
-                </InputOTP>
-                {errors.emailCode ? (
-                  <p className="mt-1.5 text-xs text-destructive">{errors.emailCode}</p>
-                ) : emailCode.length === 6 && CODE_PATTERN.test(emailCode) ? (
-                  <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                    Looks right — hit Submit application.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="phone">Phone number</Label>
             <Input
-              id="phone"
-              type="tel"
-              value={values.phone}
-              onChange={(event) => set("phone")(event.target.value)}
-              placeholder="+1 555 000 1234"
-              autoComplete="tel"
-              aria-invalid={Boolean(errors.phone)}
+              id="email"
+              type="email"
+              value={values.email}
+              onChange={(event) => update("email")(event.target.value)}
+              onBlur={markTouched("email")}
+              placeholder="you@example.com"
+              autoComplete="email"
+              aria-invalid={Boolean(serverErrors.email || (touched.email && errors.email))}
             />
-            <p className="text-xs text-muted-foreground">
-              We only collect your number for now — SMS verification comes later.
-            </p>
-            {fieldError("phone")}
+            {fieldError("email") ?? (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Your verification code is sent here automatically — no phone number.
+              </p>
+            )}
           </div>
-        </fieldset>
 
-        <fieldset className="space-y-5" disabled={submitting}>
-          <legend className="text-sm font-semibold">Security</legend>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
@@ -446,11 +566,12 @@ export function JoinDevForm() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   value={values.password}
-                  onChange={(event) => set("password")(event.target.value)}
+                  onChange={(event) => update("password")(event.target.value)}
+                  onBlur={markTouched("password")}
                   placeholder="At least 8 characters"
                   autoComplete="new-password"
                   className="pr-10"
-                  aria-invalid={Boolean(errors.password)}
+                  aria-invalid={Boolean(touched.password && errors.password)}
                 />
                 <button
                   type="button"
@@ -473,30 +594,66 @@ export function JoinDevForm() {
                 id="confirm"
                 type={showPassword ? "text" : "password"}
                 value={values.confirm}
-                onChange={(event) => set("confirm")(event.target.value)}
+                onChange={(event) => update("confirm")(event.target.value)}
+                onBlur={markTouched("confirm")}
                 placeholder="Repeat your password"
                 autoComplete="new-password"
-                aria-invalid={Boolean(errors.confirm)}
+                aria-invalid={Boolean(touched.confirm && errors.confirm)}
               />
               {fieldError("confirm")}
             </div>
           </div>
         </fieldset>
 
-        <div className={cn("space-y-3 border-t pt-6")}>
-          <Button type="submit" size="lg" className="w-full rounded-xl" disabled={submitting}>
-            {submitting ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-4">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <ShieldCheck className="size-3.5" aria-hidden="true" />
+            Human check
+          </p>
+          <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
+        </div>
+
+        <div className="space-y-3 border-t pt-6">
+          {sendError ? (
+            <p
+              className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive"
+              role="alert"
+            >
+              {sendError}
+            </p>
+          ) : sending ? (
+            <p className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              Sending your verification code to {values.email.trim().toLowerCase()}…
+            </p>
+          ) : allValid && !turnstileToken ? (
+            <p className="px-1 text-xs text-muted-foreground">
+              Details look good — finish the human check above and your code goes
+              out automatically.
+            </p>
+          ) : (
+            <p className="px-1 text-xs text-muted-foreground">
+              We&#39;ll send your verification code automatically once everything
+              checks out — no button needed.
+            </p>
+          )}
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full rounded-xl"
+            disabled={sending}
+          >
+            {sending ? (
               <>
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                Submitting…
+                Sending…
               </>
             ) : (
-              "Submit application"
+              "Continue"
             )}
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            We only use your details to set up your dev-team account. Passwords are
-            stored as salted hashes — never in plain text.
+            Passwords are stored as salted hashes — never in plain text.
           </p>
         </div>
       </form>

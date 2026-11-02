@@ -74,3 +74,6 @@ dev.log
 # cloudflare local dev state & secrets
 /.wrangler/
 .dev.vars
+
+# wrangler local secrets (never commit)
+.dev.vars

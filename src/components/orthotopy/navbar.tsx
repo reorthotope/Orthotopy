@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Github, Moon, Sun } from "lucide-react";
@@ -7,6 +8,9 @@ import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Logo } from "./logo";
 import { cn } from "@/lib/utils";
+
+const AUTH_KEY = "orthotopy_dev_auth";
+const AUTH_EVENT = "orthotopy:auth";
 
 const NAV_LINKS = [
   { href: "/apps", label: "Apps" },
@@ -20,6 +24,25 @@ const NAV_LINKS = [
 export function Navbar() {
   const { resolvedTheme, setTheme } = useTheme();
   const pathname = usePathname();
+  // Signed-in developers get a Dashboard shortcut instead of the signup CTA.
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    const read = () => {
+      try {
+        setAuthed(Boolean(window.localStorage.getItem(AUTH_KEY)));
+      } catch {
+        setAuthed(false);
+      }
+    };
+    read();
+    window.addEventListener(AUTH_EVENT, read);
+    window.addEventListener("storage", read);
+    return () => {
+      window.removeEventListener(AUTH_EVENT, read);
+      window.removeEventListener("storage", read);
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/75 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -68,7 +91,9 @@ export function Navbar() {
             </a>
           </Button>
           <Button size="sm" className="ml-1" asChild>
-            <Link href="/dev">Join Dev Team</Link>
+            <Link href={authed ? "/dashboard" : "/dev"}>
+              {authed ? "Dashboard" : "Join Dev Team"}
+            </Link>
           </Button>
         </div>
       </div>

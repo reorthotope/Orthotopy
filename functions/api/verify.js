@@ -1,7 +1,8 @@
 /**
  * POST /api/verify
  *
- * Body: { email, code, nickname, username, phone, password, turnstileToken }
+ * Body: { email, code, nickname, username, password, turnstileToken }
+ * (phone is optional — the form does not collect it for now)
  *
  * Checks the emailed code, then creates the dev-team account row in D1 with a
  * salted PBKDF2 password hash. Codes are single-use and deleted on success.
@@ -17,9 +18,9 @@ import {
   EMAIL_RE,
   MAX_ATTEMPTS,
   PHONE_RE,
-  USERNAME_RE,
   hashPassword,
   json,
+  usernameError,
   verifyTurnstile,
 } from "./_shared.js";
 
@@ -34,13 +35,15 @@ function checkProfile(body) {
   if (nickname.length < 2 || nickname.length > 60) {
     errors.nickname = "Tell us what to call you (at least 2 characters).";
   }
-  if (!USERNAME_RE.test(username)) {
-    errors.username = "3–20 characters: letters, numbers and underscores only.";
+  const usernameReason = usernameError(username);
+  if (usernameReason) {
+    errors.username = usernameReason;
   }
   if (!EMAIL_RE.test(email) || email.length > 254) {
     errors.email = "Enter a valid email address, e.g. you@example.com.";
   }
-  if (!PHONE_RE.test(phone)) {
+  // Phone is optional for now (the form doesn't collect it); validate only when present.
+  if (phone && !PHONE_RE.test(phone)) {
     errors.phone = "Include the country code, e.g. +1 555 000 1234.";
   }
   if (password.length < 8 || password.length > 200) {
@@ -102,11 +105,35 @@ export async function onRequestPost({ request, env }) {
       ? Math.floor(record.expiresAt / 1000)
       : Math.floor(Date.now() / 1000) + Math.min(CODE_TTL_SECONDS, 300);
     await env.CODES.put(key, JSON.stringify({ ...record, attempts }), { expiration });
-    return json({ error: "That code doesn't match — check the email and try again.", field: "code" }, 400);
+    const left = Math.max(0, MAX_ATTEMPTS - attempts);
+    if (left === 0) {
+      return json({ error: "That code doesn't match and you're out of attempts — request a fresh code.", field: "code" }, 400);
+    }
+    return json(
+      {
+        error: `That code doesn't match — ${left} attempt${left === 1 ? "" : "s"} left.`,
+        field: "code",
+      },
+      400
+    );
   }
 
   // Code accepted — make sure the username/email are still free before hashing.
   try {
+    // Self-healing schema: creating the table here means binding a fresh D1
+    // database is enough — no manual migration step required.
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nickname TEXT NOT NULL,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL UNIQUE,
+        phone TEXT,
+        password_hash TEXT NOT NULL,
+        email_verified INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    ).run();
     const taken = await env.DB
       .prepare("SELECT username, email FROM users WHERE username = ?1 OR email = ?2")
       .bind(values.username, values.email)

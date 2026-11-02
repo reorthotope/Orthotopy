@@ -11,8 +11,39 @@ export const MAX_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_MS = 45_000;
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const USERNAME_RE = /^[a-z0-9_](?:[a-z0-9_]{1,18}[a-z0-9_])?$/; // input is lowercased first
 export const PHONE_RE = /^\+?[0-9](?:[0-9\s-]{5,17})[0-9]$/;
+
+/**
+ * Username policy (mirror of src/lib/verification.ts — keep both in sync):
+ *  - always lowercase (the frontend lowercases as the user types)
+ *  - 3–20 characters
+ *  - lowercase letters, numbers, dots (.), hyphens (-) and underscores (_)
+ *  - commas and spaces are never allowed
+ *  - must START with a letter (no number, no symbol, no period)
+ *  - must END with a letter or number (no symbol or period)
+ *
+ * Returns the specific reason when invalid, or null when acceptable.
+ */
+export function usernameError(raw) {
+  const u = String(raw ?? "");
+  if (!u) return "Choose a username.";
+  if (/[A-Z]/.test(u)) return "Usernames are lowercase only.";
+  if (/\s/.test(u)) return "Spaces are not allowed in usernames.";
+  if (u.includes(",")) return "Commas are not allowed in usernames.";
+  if (u.length < 3) return "Username must be at least 3 characters.";
+  if (u.length > 20) return "Username can be at most 20 characters.";
+  if (!/^[a-z0-9._-]+$/.test(u)) {
+    return "Only lowercase letters, numbers, dots (.), hyphens (-) and underscores (_) are allowed.";
+  }
+  if (/[0-9]/.test(u.charAt(0))) return "Usernames can't start with a number.";
+  if (!/^[a-z]/.test(u)) {
+    return "Usernames must start with a letter — no symbols, dots or hyphens at the start.";
+  }
+  if (!/[a-z0-9]$/.test(u)) {
+    return "Usernames can't end with a symbol or period — it must end with a letter or number.";
+  }
+  return null;
+}
 
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), {

@@ -68,6 +68,9 @@ export function Turnstile({ onToken, resetSignal = 0 }: TurnstileProps) {
           "expired-callback": () => onTokenRef.current(""),
           "error-callback": () => onTokenRef.current(""),
           theme: "auto",
+          // Stay out of the way: the form auto-sends the code as soon as a
+          // token exists, so only show UI when an interaction is required.
+          appearance: "interaction-only",
         });
       })
       .catch(() => {
