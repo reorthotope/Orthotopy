@@ -27,19 +27,27 @@ import { cn } from "@/lib/utils";
 import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verification";
 
 /**
- * Developer signup flow.
+ * Developer portal forms.
  *
- * Step 1 — details: nickname, username (always lowercase, strict format),
- * email, password + confirm. Continue (or Enter) validates every field and
- * only then sends the verification code — nothing is sent before the user
- * explicitly submits.
- * Step 2 — verify: the 6-character LLDDDD code is checked automatically as
- * soon as the sixth character is typed; a resend button (45s cooldown) and an
- * "edit details" escape hatch are available.
- * Step 3 — success: the account is created server-side (D1) and the visitor
- * is handed off to /dashboard.
+ * Mode "signup" —
+ *   Step 1 — details: nickname, username (always lowercase, strict format),
+ *   email, password + confirm. Continue (or Enter) validates every field and
+ *   only then sends the verification code — nothing is sent before the user
+ *   explicitly submits.
+ *   Step 2 — verify: the 6-character LLDDDD code is checked automatically as
+ *   soon as the sixth character is typed; a resend button (45s cooldown) and an
+ *   "edit details" escape hatch are available.
+ *   Step 3 — success: the account is created server-side (D1) and the visitor
+ *   is handed off to /dashboard.
  *
- * API: POST /api/request-code (KV + Brevo), POST /api/verify (D1 users row).
+ * Mode "signin" —
+ *   Returning developers reach it through "Already joined?" below the
+ *   Continue button. It asks for the username OR email plus the password,
+ *   checks them against the same D1 account row that registration created
+ *   and hands off to /dashboard.
+ *
+ * API: POST /api/request-code (KV + Brevo), POST /api/verify (D1 users row),
+ *      POST /api/login (D1 users row).
  */
 
 interface FormValues {
@@ -64,6 +72,7 @@ const RESEND_SECONDS = 45;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type Step = "details" | "code" | "done";
+type Mode = "signup" | "signin";
 
 function computeErrors(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -97,14 +106,33 @@ interface VerifyResponse {
   fields?: Record<string, string>;
 }
 
+interface LoginResponse {
+  ok?: boolean;
+  error?: string;
+  user?: {
+    nickname?: string;
+    username?: string;
+    email?: string;
+    createdAt?: string | null;
+  };
+}
+
 export function JoinDevForm() {
   const router = useRouter();
 
   const [step, setStep] = useState<Step>("details");
+  const [mode, setMode] = useState<Mode>("signup");
   const [values, setValues] = useState<FormValues>(EMPTY);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
+
+  const [signinId, setSigninId] = useState("");
+  const [signinPassword, setSigninPassword] = useState("");
+  const [signinTouched, setSigninTouched] = useState({ identifier: false, password: false });
+  const [showSigninPassword, setShowSigninPassword] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [signinError, setSigninError] = useState<string | null>(null);
 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -130,6 +158,7 @@ export function JoinDevForm() {
   sentEmailRef.current = sentEmail;
   const sendingRef = useRef(false);
   const verifyingRef = useRef(false);
+  const signingInRef = useRef(false);
   const sentForRef = useRef<string | null>(null); // email the last code was sent to
 
   const errors = useMemo(() => computeErrors(values), [values]);
@@ -326,6 +355,76 @@ export function JoinDevForm() {
     void sendCode(sentEmail);
   };
 
+  // ---------------------------------------------------------------- sign in
+  const switchMode = (next: Mode) => {
+    setMode(next);
+    setSendError(null);
+    setSigninError(null);
+    setSigninTouched({ identifier: false, password: false });
+  };
+
+  const handleSigninSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSigninTouched({ identifier: true, password: true });
+    if (signingInRef.current) return;
+    if (!signinId.trim() || !signinPassword) return;
+    if (TURNSTILE_ENABLED && !turnstileToken) {
+      setSigninError(
+        "The human check is still running — give it a second, then press Sign in again."
+      );
+      return;
+    }
+    signingInRef.current = true;
+    setSigningIn(true);
+    setSigninError(null);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          identifier: signinId.trim(),
+          password: signinPassword,
+          turnstileToken: tokenRef.current,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as LoginResponse | null;
+      if (res.ok && data?.ok && data.user) {
+        try {
+          localStorage.setItem(
+            AUTH_KEY,
+            JSON.stringify({
+              nickname: data.user.nickname || data.user.username || "Developer",
+              username: data.user.username || "",
+              email: data.user.email || "",
+              createdAt: data.user.createdAt || new Date().toISOString(),
+            })
+          );
+          window.dispatchEvent(new Event(AUTH_EVENT));
+        } catch {
+          // Storage unavailable (private mode) — the dashboard gate handles it.
+        }
+        router.replace("/dashboard");
+        return;
+      }
+      setSigninError(
+        data?.error ||
+          (res.status === 403
+            ? "The security check blocked this request — refresh the page and try again."
+            : "We couldn't sign you in right now — please try again in a moment.")
+      );
+      // The Turnstile token is single-use — mint a fresh one for the next try.
+      setTurnstileReset((n) => n + 1);
+    } catch {
+      setSigninError(
+        "Network error — we couldn't reach the server. Check your connection and try again."
+      );
+      setTurnstileReset((n) => n + 1);
+    } finally {
+      signingInRef.current = false;
+      setSigningIn(false);
+    }
+  };
+
   // ---------------------------------------------------------------- success
   if (step === "done") {
     return (
@@ -454,7 +553,158 @@ export function JoinDevForm() {
     );
   }
 
-  // ------------------------------------------------------------------ step 1
+  const signedInBanner = alreadySignedIn ? (
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
+      <span>
+        You&#39;re signed in as{" "}
+        <strong className="text-foreground">@{alreadySignedIn}</strong>.
+      </span>
+      <Button variant="outline" size="sm" asChild>
+        <a href="/dashboard">Open dashboard</a>
+      </Button>
+    </div>
+  ) : null;
+
+  // ----------------------------------------------------------------- sign in
+  if (mode === "signin") {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
+        <div className="max-w-2xl">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            Welcome back
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
+            Sign in with the username or email and the password you registered —
+            your developer dashboard is waiting.
+          </p>
+        </div>
+
+        {signedInBanner}
+
+        <form onSubmit={handleSigninSubmit} noValidate className="mt-8 space-y-6 rounded-2xl border bg-card p-6 sm:p-8">
+          <fieldset className="space-y-5" disabled={signingIn}>
+            <div className="space-y-2">
+              <Label htmlFor="signin-identifier">Username or email</Label>
+              <div className="relative">
+                <AtSign
+                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  id="signin-identifier"
+                  value={signinId}
+                  onChange={(event) => setSigninId(event.target.value.toLowerCase())}
+                  onBlur={() => setSigninTouched((prev) => ({ ...prev, identifier: true }))}
+                  placeholder="kite.dev or you@example.com"
+                  autoComplete="username"
+                  spellCheck={false}
+                  className="pl-9"
+                  aria-invalid={Boolean(
+                    signinTouched.identifier && !signinId.trim()
+                  )}
+                />
+              </div>
+              {signinTouched.identifier && !signinId.trim() ? (
+                <p className="mt-1.5 text-xs text-destructive">
+                  Enter the username or email you registered with.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="signin-password">Password</Label>
+              <div className="relative">
+                <Input
+                  id="signin-password"
+                  type={showSigninPassword ? "text" : "password"}
+                  value={signinPassword}
+                  onChange={(event) => setSigninPassword(event.target.value)}
+                  onBlur={() => setSigninTouched((prev) => ({ ...prev, password: true }))}
+                  placeholder="Your password"
+                  autoComplete="current-password"
+                  className="pr-10"
+                  aria-invalid={Boolean(signinTouched.password && !signinPassword)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSigninPassword((prev) => !prev)}
+                  aria-label={showSigninPassword ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {showSigninPassword ? (
+                    <EyeOff className="size-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="size-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {signinTouched.password && !signinPassword ? (
+                <p className="mt-1.5 text-xs text-destructive">
+                  Enter your password.
+                </p>
+              ) : null}
+            </div>
+          </fieldset>
+
+          {TURNSTILE_ENABLED ? (
+            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-4">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <ShieldCheck className="size-3.5" aria-hidden="true" />
+                Human check
+              </p>
+              <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
+            </div>
+          ) : null}
+
+          <div className="space-y-3 border-t pt-6">
+            {signinError ? (
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive"
+                role="alert"
+              >
+                <span>{signinError}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSigninError(null)}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : null}
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full rounded-xl"
+              disabled={signingIn}
+            >
+              {signingIn ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Signing in…
+                </>
+              ) : (
+                "Sign in"
+              )}
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              New here?{" "}
+              <button
+                type="button"
+                onClick={() => switchMode("signup")}
+                className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+              >
+                Create an account
+              </button>
+            </p>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------- create account
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
       <div className="max-w-2xl">
@@ -467,17 +717,7 @@ export function JoinDevForm() {
         </p>
       </div>
 
-      {alreadySignedIn ? (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
-          <span>
-            You&#39;re signed in as{" "}
-            <strong className="text-foreground">@{alreadySignedIn}</strong>.
-          </span>
-          <Button variant="outline" size="sm" asChild>
-            <a href="/dashboard">Open dashboard</a>
-          </Button>
-        </div>
-      ) : null}
+      {signedInBanner}
 
       <form onSubmit={handleDetailsSubmit} noValidate className="mt-8 space-y-6 rounded-2xl border bg-card p-6 sm:p-8">
         <fieldset className="space-y-5" disabled={sending}>
@@ -640,12 +880,13 @@ export function JoinDevForm() {
           </Button>
           <p className="text-center text-xs text-muted-foreground">
             Already joined?{" "}
-            <a
-              href="/dashboard"
+            <button
+              type="button"
+              onClick={() => switchMode("signin")}
               className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
             >
-              Go to your dashboard
-            </a>
+              Sign in
+            </button>
           </p>
         </div>
       </form>

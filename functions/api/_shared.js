@@ -123,6 +123,15 @@ function bytesToHex(buffer) {
     .join("");
 }
 
+function hexToBytes(hex) {
+  const clean = String(hex ?? "");
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
 /** Returns "pbkdf2-sha256$<iterations>$<salt-hex>$<hash-hex>". */
 export async function hashPassword(password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -139,4 +148,43 @@ export async function hashPassword(password) {
     256
   );
   return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${bytesToHex(salt)}$${bytesToHex(bits)}`;
+}
+
+/**
+ * Constant-time check of a plain password against a stored
+ * "pbkdf2-sha256$<iterations>$<salt-hex>$<hash-hex>" string (as written by
+ * hashPassword / verify.js). Older or unknown formats simply fail.
+ */
+export async function verifyPassword(password, stored) {
+  try {
+    const parts = String(stored ?? "").split("$");
+    if (parts.length !== 4 || parts[0] !== "pbkdf2-sha256") return false;
+    const iterations = Number.parseInt(parts[1], 10);
+    if (!Number.isFinite(iterations) || iterations < 1 || iterations > 5_000_000) {
+      return false;
+    }
+    const salt = hexToBytes(parts[2]);
+    const expected = parts[3];
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(String(password ?? "")),
+      "PBKDF2",
+      false,
+      ["deriveBits"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+      key,
+      256
+    );
+    const actual = bytesToHex(bits);
+    if (actual.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < actual.length; i++) {
+      diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
+    }
+    return diff === 0;
+  } catch {
+    return false;
+  }
 }
