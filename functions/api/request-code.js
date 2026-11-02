@@ -96,8 +96,25 @@ export async function onRequestPost({ request, env }) {
     }),
   });
   if (!res.ok) {
-    console.error(`request-code: brevo send failed with status ${res.status}`);
-    return json({ error: "We couldn't send the email right now — please try again in a moment." }, 502);
+    // Surface Brevo's own reason (e.g. "sender not confirmed") so problems
+    // are diagnosable from the form instead of a dead-end 502.
+    const raw = await res.text().catch(() => "");
+    let detail = "";
+    try {
+      const parsed = JSON.parse(raw);
+      detail = String(parsed?.message || parsed?.code || "").slice(0, 200);
+    } catch {
+      detail = raw.slice(0, 200);
+    }
+    console.error(
+      `request-code: brevo send failed with status ${res.status}${detail ? `: ${detail}` : ""}`
+    );
+    return json(
+      {
+        error: `The email service rejected the send (Brevo ${res.status}${detail ? `: ${detail}` : ""}). Please try again in a moment.`,
+      },
+      502
+    );
   }
   return json({ ok: true });
 }
