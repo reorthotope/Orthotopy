@@ -192,10 +192,14 @@ export function JoinDevForm() {
               : "We couldn't send the code right now — please try again in a moment.")
         );
       }
+      // The Turnstile token is single-use — after any failed send, mint a
+      // fresh one so the next attempt isn't rejected by siteverify.
+      setTurnstileReset((n) => n + 1);
     } catch {
       setSendError(
         "Network error — we couldn't reach the server. Check your connection and try again."
       );
+      setTurnstileReset((n) => n + 1);
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -612,12 +616,20 @@ export function JoinDevForm() {
 
         <div className="space-y-3 border-t pt-6">
           {sendError ? (
-            <p
-              className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive"
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive"
               role="alert"
             >
-              {sendError}
-            </p>
+              <span>{sendError}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSendError(null)}
+              >
+                Try again
+              </Button>
+            </div>
           ) : sending ? (
             <p className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
