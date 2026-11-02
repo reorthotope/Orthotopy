@@ -18,6 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://orthotopy.us.ci"),
   title: "Orthotopy — Every work in its right place",
   description:
     "Orthotopy is a free, open publishing home for developers and creators. Publish apps, tools, games, music, design and writing — no fees, no gatekeepers, no lock-in.",

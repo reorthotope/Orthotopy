@@ -20,15 +20,22 @@ import {
 } from "@/components/ui/input-otp";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import {
+  CODE_PATTERN,
+  generateVerificationCode,
+  normalizeCode,
+} from "@/lib/verification";
 
 /**
  * Developer-portal application form.
  *
  * This is the placeholder build requested for the dev-team flow: fields are
  * validated in the browser and the email-code verification is simulated.
- * Nothing is transmitted or stored anywhere yet — the real backend (Cloudflare
- * Pages Functions + Brevo + KV + D1) will replace the `simulate` handler and
- * the submit handler. Phone numbers are collected but not verified for now.
+ * Codes use the real format (2 letters + 4 digits, see src/lib/verification)
+ * and the preview shows you the code it "emailed". Nothing is transmitted or
+ * stored anywhere yet — the real backend (Cloudflare Pages Functions + Brevo
+ * + KV + D1) will replace the `simulate` handler and the submit handler.
+ * Phone numbers are collected but not verified for now.
  */
 
 interface FormValues {
@@ -84,6 +91,7 @@ export function JoinDevForm() {
 
   const [emailSent, setEmailSent] = useState(false);
   const [emailCode, setEmailCode] = useState("");
+  const [expectedCode, setExpectedCode] = useState("");
 
   const [submitted, setSubmitted] = useState(false);
 
@@ -102,11 +110,13 @@ export function JoinDevForm() {
       toast({ title: "Check your email", description: emailErrors.email });
       return;
     }
+    const code = generateVerificationCode();
+    setExpectedCode(code);
+    setEmailCode("");
     setEmailSent(true);
     toast({
       title: "Demo mode — email code",
-      description:
-        "A 6-digit code would now be sent to your inbox (planned: Brevo, free tier). This preview simulates it — any 6 digits pass.",
+      description: `No email is sent yet. Your preview code is ${code} — the real build mails it via Brevo.`,
     });
   };
   // -------------------------------------------------------------------------
@@ -114,8 +124,12 @@ export function JoinDevForm() {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     const nextErrors = validate(values);
-    if (emailCode.length !== 6) {
-      nextErrors.emailCode = "Request a code and enter the 6 digits (demo: any 6 digits).";
+    if (!emailSent) {
+      nextErrors.emailCode = "Request a code first — tap Send code.";
+    } else if (!CODE_PATTERN.test(emailCode)) {
+      nextErrors.emailCode = "Enter the 6-character code: 2 letters then 4 digits.";
+    } else if (emailCode !== expectedCode) {
+      nextErrors.emailCode = "That code doesn't match — check the preview code shown above.";
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -262,13 +276,17 @@ export function JoinDevForm() {
             {emailSent ? (
               <div className="rounded-xl border border-dashed p-3">
                 <p className="text-xs text-muted-foreground">
-                  Demo: enter any 6 digits — the real build mails a code with{" "}
+                  Demo: no email is sent yet — your preview code is{" "}
+                  <strong className="font-mono tracking-widest text-foreground">
+                    {expectedCode}
+                  </strong>{" "}
+                  (format: 2 letters + 4 digits). The real build mails it with{" "}
                   <strong>Brevo</strong> (free plan, 300 emails/day).
                 </p>
                 <InputOTP
                   maxLength={6}
                   value={emailCode}
-                  onChange={setEmailCode}
+                  onChange={(value) => setEmailCode(normalizeCode(value))}
                   className="mt-2"
                 >
                   <InputOTPGroup>
@@ -282,7 +300,7 @@ export function JoinDevForm() {
                 </InputOTP>
                 {errors.emailCode ? (
                   <p className="mt-1.5 text-xs text-destructive">{errors.emailCode}</p>
-                ) : emailCode.length === 6 ? (
+                ) : emailCode === expectedCode && emailCode.length === 6 ? (
                   <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                     Email verified ✓ (demo)
                   </p>
@@ -362,7 +380,8 @@ export function JoinDevForm() {
           </Button>
           <p className="text-center text-xs text-muted-foreground">
             Placeholder build — nothing is transmitted or stored. Email verification is
-            simulated in your browser.
+            simulated in your browser (codes look exactly like the real ones: 2 letters
+            + 4 digits).
           </p>
         </div>
       </form>
