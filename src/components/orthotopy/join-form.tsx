@@ -30,9 +30,9 @@ import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verificatio
  * Developer signup flow.
  *
  * Step 1 — details: nickname, username (always lowercase, strict format),
- * email, password + confirm. The verification code is sent automatically to
- * the provided email the moment everything checks out (and the Turnstile
- * human check has passed) — there is no "send" button to hunt for.
+ * email, password + confirm. Continue (or Enter) validates every field and
+ * only then sends the verification code — nothing is sent before the user
+ * explicitly submits.
  * Step 2 — verify: the 6-character LLDDDD code is checked automatically as
  * soon as the sixth character is typed; a resend button (45s cooldown) and an
  * "edit details" escape hatch are available.
@@ -269,25 +269,6 @@ export function JoinDevForm() {
     }
   }, []);
 
-  // Auto-send: the moment every field is valid (and the human check passed),
-  // the code goes out — no button press required. Editing the email later
-  // triggers a fresh send; if the code for this address was already sent we
-  // simply return to the verify step.
-  useEffect(() => {
-    if (step !== "details") return;
-    if (sending || sendError) return;
-    if (!allValid) return;
-    // Without a site key the human check is disabled — no token to wait for.
-    if (TURNSTILE_ENABLED && !turnstileToken) return;
-    const emailKey = values.email.trim().toLowerCase();
-    if (sentForRef.current === emailKey) {
-      const t = setTimeout(() => setStep("code"), 150);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => void sendCode(emailKey), 600);
-    return () => clearTimeout(t);
-  }, [step, allValid, turnstileToken, values.email, sending, sendError, sendCode]);
-
   // Auto-verify: check as soon as the sixth character lands.
   useEffect(() => {
     if (step !== "code" || verifyingRef.current) return;
@@ -326,6 +307,12 @@ export function JoinDevForm() {
     event.preventDefault();
     setTouched({ nickname: true, username: true, email: true, password: true, confirm: true });
     if (!allValid) return;
+    if (TURNSTILE_ENABLED && !turnstileToken) {
+      setSendError(
+        "The human check is still running — give it a second, then press Continue again."
+      );
+      return;
+    }
     const emailKey = values.email.trim().toLowerCase();
     if (sentForRef.current === emailKey) {
       setStep("code");
@@ -370,16 +357,12 @@ export function JoinDevForm() {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
         <div className="max-w-2xl">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-            Developer portal — step 2 of 2
-          </span>
-          <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
             Check your inbox
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-            We emailed a 6-character verification code (2 letters + 4 digits,
-            like <strong className="font-mono text-foreground">XK4831</strong>)
-            to <strong className="text-foreground">{sentEmail}</strong>. It
+            We emailed a 6-character verification code to{" "}
+            <strong className="text-foreground">{sentEmail}</strong>. It
             expires in 10 minutes — check spam too.
           </p>
         </div>
@@ -463,8 +446,8 @@ export function JoinDevForm() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Wrong address? Tap <strong>Edit details</strong> — a fresh code is sent
-            automatically once everything checks out again.
+            Wrong address? Tap <strong>Edit details</strong>, fix it and press
+            <strong> Continue</strong> to send a fresh code.
           </p>
         </div>
       </div>
@@ -475,16 +458,12 @@ export function JoinDevForm() {
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
       <div className="max-w-2xl">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          Developer portal — step 1 of 2
-        </span>
-        <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
           Join the Dev Team
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          Create your free developer account — publish and manage works across the
-          Orthotopy catalog. We&#39;ll email a 6-character code (2 letters + 4
-          digits) to verify your address; no phone number needed.
+          Create your free developer account — publish and manage works across
+          the Orthotopy catalog.
         </p>
       </div>
 
@@ -641,15 +620,9 @@ export function JoinDevForm() {
             </p>
           ) : TURNSTILE_ENABLED && allValid && !turnstileToken ? (
             <p className="px-1 text-xs text-muted-foreground">
-              Details look good — finish the human check above and your code goes
-              out automatically.
+              Finish the human check above, then press Continue.
             </p>
-          ) : (
-            <p className="px-1 text-xs text-muted-foreground">
-              We&#39;ll send your verification code automatically once everything
-              checks out — no button needed.
-            </p>
-          )}
+          ) : null}
           <Button
             type="submit"
             size="lg"
@@ -666,7 +639,13 @@ export function JoinDevForm() {
             )}
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            Passwords are stored as salted hashes — never in plain text.
+            Already joined?{" "}
+            <a
+              href="/dashboard"
+              className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+            >
+              Go to your dashboard
+            </a>
           </p>
         </div>
       </form>
