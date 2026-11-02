@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AtSign,
   CheckCircle2,
   ExternalLink,
   Eye,
   EyeOff,
+  Loader2,
   MailCheck,
   UserRound,
 } from "lucide-react";
@@ -18,24 +19,19 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
+import { Turnstile } from "@/components/orthotopy/turnstile";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {
-  CODE_PATTERN,
-  generateVerificationCode,
-  normalizeCode,
-} from "@/lib/verification";
+import { CODE_PATTERN, normalizeCode } from "@/lib/verification";
 
 /**
  * Developer-portal application form.
  *
- * This is the placeholder build requested for the dev-team flow: fields are
- * validated in the browser and the email-code verification is simulated.
- * Codes use the real format (2 letters + 4 digits, see src/lib/verification)
- * and the preview shows you the code it "emailed". Nothing is transmitted or
- * stored anywhere yet — the real backend (Cloudflare Pages Functions + Brevo
- * + KV + D1) will replace the `simulate` handler and the submit handler.
- * Phone numbers are collected but not verified for now.
+ * Talks to the real backend: POST /api/request-code stores a 6-character
+ * LLDDDD code in KV and emails it via Brevo (noreply@mail.orthotopy.us.ci);
+ * POST /api/verify checks the code and creates the account row in D1.
+ * The Turnstile widget uses the always-passing test key until
+ * NEXT_PUBLIC_TURNSTILE_SITE_KEY is configured in the Pages environment.
  */
 
 interface FormValues {
@@ -55,6 +51,8 @@ const EMPTY: FormValues = {
   password: "",
   confirm: "",
 };
+
+const RESEND_SECONDS = 45;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_RE = /^[a-z0-9_](?:[a-z0-9_]{1,18}[a-z0-9_])?$/i;
@@ -83,6 +81,24 @@ function validate(values: FormValues): Record<string, string> {
   return errors;
 }
 
+interface ApiResponse {
+  ok?: boolean;
+  devCode?: string;
+  error?: string;
+  field?: string;
+  fields?: Record<string, string>;
+}
+
+async function postJson(path: string, body: unknown) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as ApiResponse;
+  return { ok: res.ok, status: res.status, data };
+}
+
 export function JoinDevForm() {
   const { toast } = useToast();
   const [values, setValues] = useState<FormValues>(EMPTY);
@@ -91,9 +107,20 @@ export function JoinDevForm() {
 
   const [emailSent, setEmailSent] = useState(false);
   const [emailCode, setEmailCode] = useState("");
-  const [expectedCode, setExpectedCode] = useState("");
+  const [sending, setSending] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileReset, setTurnstileReset] = useState(0);
 
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setInterval(() => setResendIn((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [resendIn]);
 
   const set = (field: keyof FormValues) => (value: string) =>
     setValues((prev) => ({ ...prev, [field]: value }));
@@ -103,33 +130,60 @@ export function JoinDevForm() {
       <p className="mt-1.5 text-xs text-destructive">{errors[field]}</p>
     ) : null;
 
-  // --- placeholder verification flow (swap this for the real backend) ---
-  const sendEmailCode = () => {
+  const sendEmailCode = async () => {
     const emailErrors = validate({ ...values, ...EMPTY, email: values.email });
     if (emailErrors.email) {
       toast({ title: "Check your email", description: emailErrors.email });
       return;
     }
-    const code = generateVerificationCode();
-    setExpectedCode(code);
-    setEmailCode("");
-    setEmailSent(true);
-    toast({
-      title: "Demo mode — email code",
-      description: `No email is sent yet. Your preview code is ${code} — the real build mails it via Brevo.`,
-    });
+    if (!turnstileToken) {
+      toast({
+        title: "Almost there",
+        description: "Complete the human check first, then tap Send code.",
+      });
+      return;
+    }
+    setSending(true);
+    try {
+      const { ok, data } = await postJson("/api/request-code", {
+        email: values.email.trim(),
+        turnstileToken,
+      });
+      if (ok) {
+        setEmailSent(true);
+        setEmailCode("");
+        setResendIn(RESEND_SECONDS);
+        setTurnstileReset((n) => n + 1);
+        toast({
+          title: "Code sent",
+          description: `We emailed a 6-character code to ${values.email.trim()}. It expires in 10 minutes — check spam too.`,
+        });
+      } else {
+        toast({
+          title: "Couldn't send the code",
+          description: data.error ?? "Please try again in a moment.",
+        });
+      }
+    } catch {
+      toast({
+        title: "Network error",
+        description: "Could not reach the server — check your connection and try again.",
+      });
+    } finally {
+      setSending(false);
+    }
   };
-  // -------------------------------------------------------------------------
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     const nextErrors = validate(values);
     if (!emailSent) {
       nextErrors.emailCode = "Request a code first — tap Send code.";
     } else if (!CODE_PATTERN.test(emailCode)) {
       nextErrors.emailCode = "Enter the 6-character code: 2 letters then 4 digits.";
-    } else if (emailCode !== expectedCode) {
-      nextErrors.emailCode = "That code doesn't match — check the preview code shown above.";
+    } else if (!turnstileToken) {
+      nextErrors.emailCode = "Complete the human check, then submit again.";
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -139,8 +193,55 @@ export function JoinDevForm() {
       });
       return;
     }
-    // Placeholder submission: nothing leaves the browser in this build.
-    setSubmitted(true);
+    setSubmitting(true);
+    try {
+      const { ok, status, data } = await postJson("/api/verify", {
+        email: values.email.trim(),
+        code: emailCode,
+        nickname: values.nickname.trim(),
+        username: values.username.trim(),
+        phone: values.phone.trim(),
+        password: values.password,
+        turnstileToken,
+      });
+      if (ok) {
+        setSubmitted(true);
+        return;
+      }
+      setTurnstileReset((n) => n + 1);
+      if (status === 400 && data.field === "code") {
+        setErrors((prev) => ({ ...prev, emailCode: data.error ?? "That code doesn't match." }));
+        toast({ title: "Almost there", description: data.error ?? "Check the code and try again." });
+      } else if (data.field && data.error) {
+        setErrors((prev) => ({ ...prev, [data.field as string]: data.error as string }));
+        toast({ title: "Almost there", description: data.error });
+      } else if (data.fields) {
+        setErrors((prev) => ({ ...prev, ...data.fields }));
+        toast({ title: "Almost there", description: data.error ?? "Fix the highlighted fields." });
+      } else {
+        toast({
+          title: "Submission failed",
+          description: data.error ?? "Please try again in a moment.",
+        });
+      }
+    } catch {
+      toast({
+        title: "Network error",
+        description: "Could not reach the server — check your connection and try again.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startNewApplication = () => {
+    setValues(EMPTY);
+    setErrors({});
+    setEmailSent(false);
+    setEmailCode("");
+    setResendIn(0);
+    setTurnstileToken("");
+    setSubmitted(false);
   };
 
   if (submitted) {
@@ -150,15 +251,13 @@ export function JoinDevForm() {
           <CheckCircle2 className="size-7" aria-hidden="true" />
         </span>
         <h1 className="mt-6 text-3xl font-bold tracking-tight sm:text-4xl">
-          Application ready, {values.nickname.trim()}!
+          Application received, {values.nickname.trim()}!
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-          This is the placeholder build, so nothing was sent or stored — your details
-          never left this browser tab. When the verification backend lands, this exact
-          flow will create your dev-team application with a real email code.
-        </p>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-          Want a head start in the meantime? Contributors get noticed fast.
+          Your dev-team application is in — we verified{" "}
+          <strong className="text-foreground">{values.email.trim()}</strong> and saved your
+          spot. We&#39;ll reach out with next steps. In the meantime, contributors get
+          noticed fast.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button asChild>
@@ -171,8 +270,8 @@ export function JoinDevForm() {
               <ExternalLink className="size-4" aria-hidden="true" />
             </a>
           </Button>
-          <Button variant="outline" onClick={() => setSubmitted(false)}>
-            Edit my application
+          <Button variant="outline" onClick={startNewApplication}>
+            Start a new application
           </Button>
         </div>
       </div>
@@ -183,7 +282,7 @@ export function JoinDevForm() {
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
       <div className="max-w-2xl">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          Developer portal — preview build
+          Developer portal — applications open
         </span>
         <h1 className="mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
           Join the Dev Team
@@ -191,9 +290,9 @@ export function JoinDevForm() {
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
           We are putting together the team that builds and maintains Orthotopy — the
           catalog, the storefront and the open-source tooling behind it. Fill in the
-          application below; email verification is simulated for now and no data is
-          sent or stored anywhere yet. Phone numbers are collected but not verified
-          for now.
+          application below and verify your email with a 6-character code (2 letters +
+          4 digits); codes expire in 10 minutes. Phone numbers are collected but not
+          verified for now.
         </p>
       </div>
 
@@ -202,7 +301,7 @@ export function JoinDevForm() {
         noValidate
         className="mt-8 space-y-8 rounded-2xl border bg-card p-6 sm:p-8"
       >
-        <fieldset className="space-y-5">
+        <fieldset className="space-y-5" disabled={submitting}>
           <legend className="text-sm font-semibold">Profile</legend>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
@@ -246,7 +345,7 @@ export function JoinDevForm() {
           </div>
         </fieldset>
 
-        <fieldset className="space-y-5">
+        <fieldset className="space-y-5" disabled={submitting}>
           <legend className="text-sm font-semibold">Contact &amp; verification</legend>
 
           <div className="space-y-2">
@@ -267,21 +366,31 @@ export function JoinDevForm() {
                 variant="outline"
                 className="shrink-0"
                 onClick={sendEmailCode}
+                disabled={sending || resendIn > 0}
               >
-                <MailCheck className="size-4" aria-hidden="true" />
-                {emailSent ? "Resend code" : "Send code"}
+                {sending ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <MailCheck className="size-4" aria-hidden="true" />
+                )}
+                {sending
+                  ? "Sending…"
+                  : resendIn > 0
+                    ? `Resend in ${resendIn}s`
+                    : emailSent
+                      ? "Resend code"
+                      : "Send code"}
               </Button>
             </div>
             {fieldError("email")}
+            <Turnstile onToken={setTurnstileToken} resetSignal={turnstileReset} />
             {emailSent ? (
               <div className="rounded-xl border border-dashed p-3">
                 <p className="text-xs text-muted-foreground">
-                  Demo: no email is sent yet — your preview code is{" "}
-                  <strong className="font-mono tracking-widest text-foreground">
-                    {expectedCode}
-                  </strong>{" "}
-                  (format: 2 letters + 4 digits). The real build mails it with{" "}
-                  <strong>Brevo</strong> (free plan, 300 emails/day).
+                  We emailed a 6-character code (2 letters + 4 digits, like{" "}
+                  <strong className="font-mono text-foreground">XK4831</strong>) to{" "}
+                  <strong className="text-foreground">{values.email.trim()}</strong>. It
+                  expires in 10 minutes — check spam too.
                 </p>
                 <InputOTP
                   maxLength={6}
@@ -300,9 +409,9 @@ export function JoinDevForm() {
                 </InputOTP>
                 {errors.emailCode ? (
                   <p className="mt-1.5 text-xs text-destructive">{errors.emailCode}</p>
-                ) : emailCode === expectedCode && emailCode.length === 6 ? (
+                ) : emailCode.length === 6 && CODE_PATTERN.test(emailCode) ? (
                   <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                    Email verified ✓ (demo)
+                    Looks right — hit Submit application.
                   </p>
                 ) : null}
               </div>
@@ -327,7 +436,7 @@ export function JoinDevForm() {
           </div>
         </fieldset>
 
-        <fieldset className="space-y-5">
+        <fieldset className="space-y-5" disabled={submitting}>
           <legend className="text-sm font-semibold">Security</legend>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
@@ -375,13 +484,19 @@ export function JoinDevForm() {
         </fieldset>
 
         <div className={cn("space-y-3 border-t pt-6")}>
-          <Button type="submit" size="lg" className="w-full rounded-xl">
-            Submit application
+          <Button type="submit" size="lg" className="w-full rounded-xl" disabled={submitting}>
+            {submitting ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Submitting…
+              </>
+            ) : (
+              "Submit application"
+            )}
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            Placeholder build — nothing is transmitted or stored. Email verification is
-            simulated in your browser (codes look exactly like the real ones: 2 letters
-            + 4 digits).
+            We only use your details to set up your dev-team account. Passwords are
+            stored as salted hashes — never in plain text.
           </p>
         </div>
       </form>

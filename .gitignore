@@ -70,3 +70,7 @@ server.log
 /agent-ctx/
 /scripts/
 dev.log
+
+# cloudflare local dev state & secrets
+/.wrangler/
+.dev.vars

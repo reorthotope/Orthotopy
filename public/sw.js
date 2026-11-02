@@ -9,7 +9,7 @@
  *  - API and other same-origin GETs go straight to the network (fresh data);
  *    failures simply fall through to the offline page shell.
  */
-const VERSION = "orthotopy-pwa-v3";
+const VERSION = "orthotopy-pwa-v4";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const STATIC_CACHE = `${VERSION}-static`;
