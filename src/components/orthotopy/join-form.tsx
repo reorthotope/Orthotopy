@@ -62,8 +62,6 @@ const AUTH_KEY = "orthotopy_dev_auth";
 const AUTH_EVENT = "orthotopy:auth";
 const RESEND_SECONDS = 45;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const USERNAME_HINT =
-  "a–z, 0–9, dots, hyphens and underscores — starts with a letter, ends with a letter or number.";
 
 type Step = "details" | "code" | "done";
 
@@ -175,8 +173,8 @@ export function JoinDevForm() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: emailKey, turnstileToken: tokenRef.current }),
       });
-      const data = (await res.json().catch(() => ({}))) as RequestCodeResponse;
-      if (res.ok && data.ok) {
+      const data = (await res.json().catch(() => null)) as RequestCodeResponse | null;
+      if (res.ok && data?.ok) {
         sentForRef.current = emailKey;
         setSentEmail(emailKey);
         setCode("");
@@ -188,8 +186,10 @@ export function JoinDevForm() {
         setStep("code");
       } else {
         setSendError(
-          data.error ||
-            "We couldn't send the code right now — please try again in a moment."
+          data?.error ||
+            (res.status === 403
+              ? "The security check blocked this request — refresh the page and try again."
+              : "We couldn't send the code right now — please try again in a moment.")
         );
       }
     } catch {
@@ -220,8 +220,8 @@ export function JoinDevForm() {
           password: v.password,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as VerifyResponse;
-      if (res.ok && data.ok) {
+      const data = (await res.json().catch(() => null)) as VerifyResponse | null;
+      if (res.ok && data?.ok) {
         try {
           localStorage.setItem(
             AUTH_KEY,
@@ -240,16 +240,19 @@ export function JoinDevForm() {
         return;
       }
       setCode("");
-      if (data.fields?.username || data.fields?.email) {
+      if (data?.fields?.username || data?.fields?.email) {
         setServerErrors({
-          ...(data.fields.username ? { username: data.fields.username } : {}),
-          ...(data.fields.email ? { email: data.fields.email } : {}),
+          ...(data.fields?.username ? { username: data.fields.username } : {}),
+          ...(data.fields?.email ? { email: data.fields.email } : {}),
         });
         setStep("details");
         return;
       }
       setVerifyError(
-        data.error || "Verification failed — please try again in a moment."
+        data?.error ||
+          (res.status === 403
+            ? "The security check blocked this request — refresh the page and try again."
+            : "Verification failed — please try again in a moment.")
       );
     } catch {
       setCode("");
@@ -533,9 +536,7 @@ export function JoinDevForm() {
                   aria-invalid={Boolean(serverErrors.username || (touched.username && errors.username))}
                 />
               </div>
-              {fieldError("username") ?? (
-                <p className="mt-1.5 text-xs text-muted-foreground">{USERNAME_HINT}</p>
-              )}
+              {fieldError("username")}
             </div>
           </div>
 
@@ -551,11 +552,7 @@ export function JoinDevForm() {
               autoComplete="email"
               aria-invalid={Boolean(serverErrors.email || (touched.email && errors.email))}
             />
-            {fieldError("email") ?? (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                Your verification code is sent here automatically — no phone number.
-              </p>
-            )}
+            {fieldError("email")}
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
