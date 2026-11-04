@@ -50,18 +50,24 @@ import {
  * published works with a per-work color tag, a publish button and two line
  * graphs (views, downloads) with one colored line per work. Data comes from
  * GET /api/my-works (D1 works + work_stats_daily); a submitted work is
- * recorded as 'pending' by POST /api/works when the publish dialog opens the
- * catalog issue, and POST /api/track grows the graphs once the storefront
- * wires the beacons in.
+ * recorded as 'pending' by POST /api/works the moment the publish form is
+ * sent, and POST /api/track grows the graphs as the storefront's View /
+ * Download buttons are used.
  */
 
 interface MyWork {
   id: string;
   title: string;
   tagline: string;
+  description: string;
   kind: string;
   category: string;
+  type: string;
+  platform: string;
   status: string;
+  repoUrl: string;
+  downloadUrl: string;
+  images: string[];
   createdAt: string | null;
   views: number;
   downloads: number;
@@ -182,6 +188,16 @@ export function DeveloperDashboard() {
       if (fresh) void loadDashboard(auth.token);
     });
   }, [ready, auth, loadProfile, loadDashboard]);
+
+  // A publish that just succeeded (the dialog lives in the site shell)
+  // announces itself here so the list and counters update immediately.
+  useEffect(() => {
+    const onWorksChanged = () => {
+      if (auth?.token) void loadDashboard(auth.token);
+    };
+    window.addEventListener("orthotopy:works", onWorksChanged);
+    return () => window.removeEventListener("orthotopy:works", onWorksChanged);
+  }, [auth, loadDashboard]);
 
   const refreshAll = useCallback(async () => {
     if (!auth?.token) return;
@@ -486,8 +502,8 @@ export function DeveloperDashboard() {
               <p className="text-sm font-medium">No works published yet</p>
               <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
                 Submit your first one — it lands here immediately as
-                &ldquo;pending&rdquo; and goes live in the catalog once the
-                issue merges.
+                &ldquo;pending&rdquo; and goes live in the catalog within
+                24–48 hours once the review approves it.
               </p>
               <Button size="sm" variant="outline" className="mt-4" onClick={publish}>
                 <Rocket className="size-4" aria-hidden="true" />
@@ -508,20 +524,27 @@ export function DeveloperDashboard() {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{work.title}</p>
-                      {work.tagline ? (
-                        <p className="truncate text-xs text-muted-foreground">{work.tagline}</p>
+                      {(work.description || work.tagline) ? (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {work.description || work.tagline}
+                        </p>
                       ) : null}
                     </div>
                     {pending ? (
                       <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
                         Pending review
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        Live
+                      </span>
+                    )}
                     <span
                       className="rounded-full border px-2 py-0.5 text-[11px] font-medium"
                       style={{ borderColor: `${color}55`, color }}
                     >
-                      {work.category}
+                      {work.type || work.category}
+                      {work.platform ? ` · ${work.platform}` : ""}
                     </span>
                     <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
                       <Eye className="size-3.5" aria-hidden="true" />

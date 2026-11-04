@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,19 +21,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { CATEGORIES, CATEGORY_ICONS, KINDS, gradientFor } from "@/lib/works";
-import { CheckCircle2, Circle, Github, Loader2 } from "lucide-react";
 import {
-  fetchProfile,
-  readAuth,
-  readCachedProfile,
-  type DevProfile,
-} from "./dev-profile";
-
-const CATALOG_URL =
-  "https://github.com/reorthotope/Orthotopy/blob/main/public/catalog/works.json";
-const NEW_ISSUE_URL = "https://github.com/reorthotope/Orthotopy/issues/new";
+  Circle,
+  CheckCircle2,
+  Clock3,
+  Github,
+  ImagePlus,
+  Loader2,
+  Send,
+} from "lucide-react";
+import {
+  IMAGE_NAMING_HINT,
+  TYPE_PLATFORMS,
+  WORK_TYPES,
+  parseGithubRepoUrl,
+  type WorkType,
+} from "@/lib/works";
+import { fetchProfile, readAuth, readCachedProfile, type DevProfile } from "./dev-profile";
 
 interface PublishDialogProps {
   open: boolean;
@@ -49,33 +53,63 @@ interface PublishDialogProps {
  */
 type Gate = "checking" | "no-account" | "locked" | "ready";
 
-export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
-  const { toast } = useToast();
+/**
+ * Result of POST /api/works-scan — the live repo preview shown as soon as
+ * the developer types their repo link.
+ */
+interface ScanResult {
+  owner: string;
+  repo: string;
+  repoUrl: string;
+  description: string;
+  images: string[];
+  imageUrls: string[];
+  suggestedDownloadUrl: string;
+}
 
+interface SubmittedWork {
+  id: string;
+  title: string;
+  status: string;
+}
+
+type ScanState = "idle" | "scanning" | "ok" | "error";
+
+export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
   const [gate, setGate] = useState<Gate>("checking");
   const [profile, setProfile] = useState<DevProfile | null>(null);
   const [needsSignin, setNeedsSignin] = useState(false);
 
+  // Form fields
   const [title, setTitle] = useState("");
-  const [creator, setCreator] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [kind, setKind] = useState<string>("Developer");
-  const [category, setCategory] = useState<string>("Apps");
+  const [workType, setWorkType] = useState<WorkType>("Apps");
+  const [platform, setPlatform] = useState<string>(TYPE_PLATFORMS.Apps[0]);
+  const [description, setDescription] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
 
-  const valid =
-    title.trim().length >= 2 && creator.trim().length >= 2 && tagline.trim().length >= 4;
+  // Repo scan (live preview of public status + repo-hosted screenshots)
+  const [scanState, setScanState] = useState<ScanState>("idle");
+  const [scan, setScan] = useState<ScanResult | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const scanNonceRef = useRef(0);
+
+  // Submit
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<SubmittedWork | null>(null);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setGate("checking");
-    setProfile(null);
-    setNeedsSignin(false);
-
-    const resolve = async () => {
+    // Deferred to a microtask: the gate is reset on every close (event
+    // handler), and the resolve below runs one tick after the dialog opens
+    // instead of setting state synchronously inside the effect body.
+    queueMicrotask(async () => {
       const auth = readAuth();
+      if (cancelled) return;
       if (!auth?.token) {
-        if (!cancelled) setGate("no-account");
+        setGate("no-account");
         return;
       }
       const cached = readCachedProfile();
@@ -103,79 +137,148 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
         setNeedsSignin(true);
         setGate("locked");
       }
-    };
-    void resolve();
+    });
     return () => {
       cancelled = true;
     };
   }, [open]);
 
   /**
-   * The catalog is a static JSON file in the repository, so "publishing"
-   * opens a prefilled GitHub issue with the ready-to-merge JSON entry.
-   * Merging it (and redeploing) lists the work on the live site. The work is
-   * also recorded in D1 (status 'pending') so it shows up in the developer's
-   * dashboard right away — POST /api/works; a failure there never blocks the
-   * issue (the issue remains the source of truth).
+   * Live repo preview: as soon as the repo link parses, the form asks the
+   * server to look the repo up — public check and the img.png / img1.png …
+   * screenshots it hosts. Debounced (immediate when the link turned invalid,
+   * to clear the preview); only the newest answer wins. Every state change
+   * happens inside the timer callback, never synchronously in the effect.
    */
-  const publish = async () => {
-    const auth = readAuth();
-    const entry = {
-      title: title.trim(),
-      tagline: tagline.trim(),
-      kind,
-      category,
-      creator: creator.trim(),
-      icon: CATEGORY_ICONS[category] ?? "sparkles",
-      gradient: gradientFor(title.trim()),
-    };
-    const body = [
-      "Please add this work to the Orthotopy catalog.",
-      "",
-      "Append the JSON object below to the `works` array in " +
-        "`public/catalog/works.json`, then merge and redeploy:",
-      "",
-      "```json",
-      JSON.stringify(entry, null, 2),
-      "```",
-      "",
-      `Catalog file: ${CATALOG_URL}`,
-    ].join("\n");
-    if (auth?.token) {
+  useEffect(() => {
+    if (!open || gate !== "ready") return;
+    const link = repoUrl.trim();
+    const parsed = link ? parseGithubRepoUrl(link) : null;
+    const nonce = ++scanNonceRef.current;
+    const timer = setTimeout(async () => {
+      if (nonce !== scanNonceRef.current) return;
+      if (!parsed) {
+        setScanState("idle");
+        setScan(null);
+        setScanError(null);
+        return;
+      }
+      setScanState("scanning");
+      setScanError(null);
+      const auth = readAuth();
       try {
-        await fetch("/api/works", {
+        const res = await fetch("/api/works-scan", {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: `Bearer ${auth.token}`,
+            ...(auth?.token ? { authorization: `Bearer ${auth.token}` } : {}),
           },
-          body: JSON.stringify({
-            title: entry.title,
-            tagline: entry.tagline,
-            kind: entry.kind,
-            category: entry.category,
-            icon: entry.icon,
-            gradient: entry.gradient,
-          }),
+          body: JSON.stringify({ repoUrl: link }),
         });
+        if (nonce !== scanNonceRef.current) return; // a newer scan started
+        const data = (await res.json().catch(() => null)) as
+          | (ScanResult & { ok?: boolean; error?: string })
+          | null;
+        if (res.ok && data?.ok) {
+          setScan({
+            owner: data.owner,
+            repo: data.repo,
+            repoUrl: data.repoUrl,
+            description: data.description,
+            images: data.images ?? [],
+            imageUrls: data.imageUrls ?? [],
+            suggestedDownloadUrl: data.suggestedDownloadUrl ?? "",
+          });
+          setScanState("ok");
+          // Suggest the GitHub Releases asset as the download link, but only
+          // into an empty field — never over what the developer typed.
+          setDownloadUrl((current) =>
+            current.trim() ? current : data.suggestedDownloadUrl || ""
+          );
+          return;
+        }
+        setScan(null);
+        setScanState("error");
+        setScanError(data?.error || "We couldn't check that repo — please try again in a moment.");
       } catch {
-        // The dashboard row is a convenience — the GitHub issue is what
-        // publishes the work, so never block on this.
+        if (nonce !== scanNonceRef.current) return;
+        setScan(null);
+        setScanState("error");
+        setScanError("Network error while checking the repo — please try again.");
       }
+    }, parsed ? 600 : 0);
+    return () => clearTimeout(timer);
+  }, [repoUrl, open, gate]);
+
+  const parsedRepo = parseGithubRepoUrl(repoUrl);
+  const titleOk = title.trim().length >= 2 && title.trim().length <= 80;
+  const descriptionOk = description.trim().length >= 10 && description.trim().length <= 2000;
+  const repoOk = Boolean(parsedRepo) && scanState === "ok";
+  const downloadOk = downloadUrl.trim().length > 8 && /^https?:\/\/\S+$/i.test(downloadUrl.trim());
+  const valid = titleOk && descriptionOk && repoOk && downloadOk && platform.length > 0;
+
+  const submit = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    const auth = readAuth();
+    try {
+      const res = await fetch("/api/works", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(auth?.token ? { authorization: `Bearer ${auth.token}` } : {}),
+        },
+        body: JSON.stringify({
+          title: title.trim(),
+          type: workType,
+          platform,
+          description: description.trim(),
+          repoUrl: repoUrl.trim(),
+          downloadUrl: downloadUrl.trim(),
+        }),
+      });
+      if (res.status === 401) {
+        setSubmitError("Your session has expired — close this and sign in with GitHub once more.");
+        setSubmitting(false);
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; work?: SubmittedWork; error?: string }
+        | null;
+      if (res.ok && data?.ok && data.work) {
+        setSubmitted(data.work);
+        try {
+          window.dispatchEvent(new Event("orthotopy:works"));
+        } catch {
+          // ignore
+        }
+      } else {
+        setSubmitError(data?.error || "We couldn't record that — please try again in a moment.");
+      }
+    } catch {
+      setSubmitError("Network error — we couldn't reach the server. Check your connection and try again.");
     }
-    const url = `${NEW_ISSUE_URL}?title=${encodeURIComponent(
-      `[Publish] ${entry.title}`
-    )}&body=${encodeURIComponent(body)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    setSubmitting(false);
+  };
+
+  const closeAndReset = () => {
     onOpenChange(false);
+    setGate("checking");
+    setProfile(null);
+    setNeedsSignin(false);
     setTitle("");
-    setCreator("");
-    setTagline("");
-    toast({
-      title: "Opening GitHub",
-      description:
-        "Submit the prefilled issue (or turn it into a pull request) — the work is already on your dashboard as pending and goes live once the issue merges.",
-    });
+    setWorkType("Apps");
+    setPlatform(TYPE_PLATFORMS.Apps[0]);
+    setDescription("");
+    setRepoUrl("");
+    setDownloadUrl("");
+    setScan(null);
+    setScanState("idle");
+    setScanError(null);
+    setSubmitting(false);
+    setSubmitted(null);
+    setSubmitError(null);
   };
 
   const gateRow = (done: boolean, label: string, hint: string) => (
@@ -199,9 +302,40 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
     </li>
   );
 
+  const scanStatusLine = () => {
+    if (scanState === "idle") {
+      return (
+        <p className="text-xs text-muted-foreground">
+          Paste your public repo link — github.com/yourname/your-work.
+        </p>
+      );
+    }
+    if (scanState === "scanning") {
+      return (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          Checking the repo on GitHub…
+        </p>
+      );
+    }
+    if (scanState === "error") {
+      return (
+        <p className="text-xs text-destructive" role="alert">
+          {scanError}
+        </p>
+      );
+    }
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+        <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
+        Public repo found: {scan?.owner}/{scan?.repo}
+      </p>
+    );
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(next) : closeAndReset())}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         {gate === "checking" ? (
           <div className="flex justify-center py-10" aria-label="Checking your account">
             <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
@@ -218,7 +352,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             </DialogHeader>
             <DialogFooter className="flex-col gap-2 sm:flex-col">
               <Button asChild className="w-full">
-                <Link href="/dev" onClick={() => onOpenChange(false)}>
+                <Link href="/dev" onClick={closeAndReset}>
                   <Github className="size-4" aria-hidden="true" />
                   Join with GitHub
                 </Link>
@@ -254,7 +388,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             ) : null}
             <DialogFooter className="flex-col gap-2 sm:flex-col">
               <Button asChild className="w-full">
-                <Link href="/dashboard" onClick={() => onOpenChange(false)}>
+                <Link href="/dashboard" onClick={closeAndReset}>
                   Finish setup on your dashboard
                 </Link>
               </Button>
@@ -263,20 +397,50 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
               </p>
             </DialogFooter>
           </>
+        ) : submitted ? (
+          <>
+            <div className="flex justify-center pt-2">
+              <span className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="size-6" aria-hidden="true" />
+              </span>
+            </div>
+            <DialogHeader className="items-center text-center">
+              <DialogTitle>Sent for review</DialogTitle>
+              <DialogDescription className="text-center">
+                &ldquo;{submitted.title}&rdquo; is in the review queue. It goes
+                live in the catalog within 24–48 hours — you&apos;ll already
+                find it on your dashboard marked{" "}
+                <span className="whitespace-nowrap font-medium text-amber-600 dark:text-amber-400">
+                  Pending review
+                </span>
+                .
+              </DialogDescription>
+            </DialogHeader>
+            <p className="mx-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock3 className="size-3.5" aria-hidden="true" />
+              Reviews happen daily — nothing else is needed from you.
+            </p>
+            <DialogFooter>
+              <Button className="w-full" onClick={closeAndReset}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
         ) : (
           <>
             <DialogHeader>
               <DialogTitle>Publish a work</DialogTitle>
               <DialogDescription>
-                List your app, tool, game, music, design or writing. The catalog is open on
-                GitHub — submitting opens a prefilled issue with your listing.
+                Enter the listing directly — it lands in the review queue and
+                goes live within 24–48 hours. No uploads: screenshots come
+                from your repo.
               </DialogDescription>
             </DialogHeader>
             <form
               className="grid gap-4"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (valid) void publish();
+                void submit();
               }}
             >
               <div className="grid gap-2">
@@ -290,67 +454,144 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
                   required
                 />
               </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
-                  <Label htmlFor="work-creator">Your name or handle</Label>
-                  <Input
-                    id="work-creator"
-                    value={creator}
-                    onChange={(event) => setCreator(event.target.value)}
-                    placeholder="e.g. Mara Lindqvist"
-                    maxLength={60}
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="work-kind">Publishing as</Label>
-                  <Select value={kind} onValueChange={setKind}>
-                    <SelectTrigger id="work-kind" aria-label="Publisher kind">
+                  <Label htmlFor="work-type">Type</Label>
+                  <Select
+                    value={workType}
+                    onValueChange={(next) => {
+                      const type = next as WorkType;
+                      setWorkType(type);
+                      setPlatform(TYPE_PLATFORMS[type][0]);
+                    }}
+                  >
+                    <SelectTrigger id="work-type" aria-label="Work type">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {KINDS.map((k) => (
-                        <SelectItem key={k} value={k}>
-                          {k}
+                      {WORK_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="work-platform">Platform</Label>
+                  <Select value={platform} onValueChange={setPlatform}>
+                    <SelectTrigger id="work-platform" aria-label="Platform">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TYPE_PLATFORMS[workType].map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {p}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+
               <div className="grid gap-2">
-                <Label htmlFor="work-category">Category</Label>
-                <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger id="work-category" aria-label="Category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="work-tagline">One-line pitch</Label>
+                <Label htmlFor="work-description">Description</Label>
                 <Textarea
-                  id="work-tagline"
-                  value={tagline}
-                  onChange={(event) => setTagline(event.target.value)}
-                  placeholder="What is it, and why should people care?"
-                  rows={2}
-                  maxLength={160}
+                  id="work-description"
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="What is it, what does it do, why should people try it?"
+                  rows={4}
+                  maxLength={2000}
                   required
                 />
+                <p className="text-right text-[11px] text-muted-foreground">
+                  {description.trim().length}/2000
+                </p>
               </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="work-repo">GitHub repo link</Label>
+                <Input
+                  id="work-repo"
+                  value={repoUrl}
+                  onChange={(event) => setRepoUrl(event.target.value)}
+                  placeholder="https://github.com/you/your-work"
+                  maxLength={300}
+                  required
+                />
+                {scanStatusLine()}
+              </div>
+
+              <div className="grid gap-2 rounded-xl border bg-card p-3">
+                <p className="flex items-center gap-1.5 text-xs font-medium">
+                  <ImagePlus className="size-3.5" aria-hidden="true" />
+                  Screenshots from the repo {scan?.images?.length ? `(${scan.images.length}/10)` : ""}
+                </p>
+                {scanState === "ok" && scan && scan.images.length > 0 ? (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {scan.imageUrls.slice(0, 10).map((src, index) => (
+                        <img
+                          key={src}
+                          src={src}
+                          alt={`${scan.repo} screenshot ${index + 1}`}
+                          loading="lazy"
+                          className="h-14 w-24 rounded-md border object-cover"
+                        />
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      These are shown on the work&apos;s page, straight from
+                      your repo — nothing is uploaded here.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    Optional. To show screenshots, add images to the repo root
+                    named exactly {IMAGE_NAMING_HINT} — they&apos;re fetched
+                    from the repo automatically once the link is checked. Ten
+                    images max.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="work-download">Download link</Label>
+                <Input
+                  id="work-download"
+                  value={downloadUrl}
+                  onChange={(event) => setDownloadUrl(event.target.value)}
+                  placeholder="https://github.com/you/your-work/releases/download/v1.0.0/app.apk"
+                  maxLength={600}
+                  required
+                />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  A direct download URL — a GitHub Releases asset (browsers
+                  auto-download it) or your own direct file link. The site&apos;s
+                  Download button opens this link.
+                  {scan?.suggestedDownloadUrl ? " Your repo's latest release was suggested above." : ""}
+                </p>
+              </div>
+
+              {submitError ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {submitError}
+                </p>
+              ) : null}
+
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                <Button type="button" variant="outline" onClick={closeAndReset}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={!valid}>
-                  Continue on GitHub
+                <Button type="submit" disabled={!valid || submitting}>
+                  {submitting ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Send className="size-4" aria-hidden="true" />
+                  )}
+                  {submitting ? "Sending…" : "Submit for review"}
                 </Button>
               </DialogFooter>
             </form>

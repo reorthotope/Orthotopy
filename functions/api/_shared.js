@@ -129,6 +129,16 @@ export async function getSessionUser(env, request) {
 // successful pass the checks are skipped entirely.
 let schemaReady = false;
 
+/** false when the works table is missing the column, true when selectable. */
+async function probeWorksColumn(env, column) {
+  try {
+    await env.DB.prepare(`SELECT ${column} FROM works LIMIT 1`).all();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** true: column selectable; "no-table": users table missing; false: no column. */
 async function probeColumn(env, column) {
   try {
@@ -152,8 +162,10 @@ export async function ensureProfileSchema(env) {
     )`
   ).run();
   // Published works owned by accounts. Rows are inserted by POST /api/works
-  // when a developer submits a work (status 'pending' until the catalog
-  // issue merges); the dashboard reads them through /api/my-works.
+  // when a developer submits a work (status 'pending' until the review
+  // approves it); the dashboard reads them through /api/my-works. Screenshots
+  // are never uploaded — they live in the work's own GitHub repo as
+  // img.png, img1.png … img9.png and are detected from the repo contents.
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS works (
       id TEXT PRIMARY KEY,
@@ -165,7 +177,16 @@ export async function ensureProfileSchema(env) {
       icon TEXT NOT NULL DEFAULT 'sparkles',
       gradient TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'pending',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      description TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT '',
+      platform TEXT NOT NULL DEFAULT '',
+      repo_url TEXT NOT NULL DEFAULT '',
+      repo_owner TEXT NOT NULL DEFAULT '',
+      repo_name TEXT NOT NULL DEFAULT '',
+      download_url TEXT NOT NULL DEFAULT '',
+      images TEXT NOT NULL DEFAULT '[]',
+      reviewed_at TEXT
     )`
   ).run();
   await env.DB.prepare(
@@ -180,6 +201,29 @@ export async function ensureProfileSchema(env) {
       await env.DB.prepare(
         "ALTER TABLE works ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"
       ).run();
+    } catch (err) {
+      const msg = String((err && err.message) || "");
+      if (!/duplicate column|already exists/i.test(msg)) throw err;
+    }
+  }
+  // Columns for the direct publish flow (title + description + repo +
+  // download link + repo-hosted screenshots). Older databases get them
+  // in place; fresh databases already have them from the CREATE above —
+  // the probe makes both shapes converge.
+  for (const [col, ddl] of [
+    ["description", "ALTER TABLE works ADD COLUMN description TEXT NOT NULL DEFAULT ''"],
+    ["type", "ALTER TABLE works ADD COLUMN type TEXT NOT NULL DEFAULT ''"],
+    ["platform", "ALTER TABLE works ADD COLUMN platform TEXT NOT NULL DEFAULT ''"],
+    ["repo_url", "ALTER TABLE works ADD COLUMN repo_url TEXT NOT NULL DEFAULT ''"],
+    ["repo_owner", "ALTER TABLE works ADD COLUMN repo_owner TEXT NOT NULL DEFAULT ''"],
+    ["repo_name", "ALTER TABLE works ADD COLUMN repo_name TEXT NOT NULL DEFAULT ''"],
+    ["download_url", "ALTER TABLE works ADD COLUMN download_url TEXT NOT NULL DEFAULT ''"],
+    ["images", "ALTER TABLE works ADD COLUMN images TEXT NOT NULL DEFAULT '[]'"],
+    ["reviewed_at", "ALTER TABLE works ADD COLUMN reviewed_at TEXT"],
+  ]) {
+    if ((await probeWorksColumn(env, col)) === true) continue;
+    try {
+      await env.DB.prepare(ddl).run();
     } catch (err) {
       const msg = String((err && err.message) || "");
       if (!/duplicate column|already exists/i.test(msg)) throw err;

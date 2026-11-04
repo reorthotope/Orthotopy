@@ -20,6 +20,15 @@ import {
 
 const SERIES_DAYS = 30;
 
+function parseImagesColumn(raw) {
+  try {
+    const list = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(list) ? list.filter((f) => typeof f === "string" && f) : [];
+  } catch {
+    return [];
+  }
+}
+
 function utcDay(offsetDays = 0) {
   const d = new Date(Date.now() - offsetDays * 86_400_000);
   return d.toISOString().slice(0, 10);
@@ -39,7 +48,8 @@ export async function onRequestGet({ env, request }) {
 
     const worksRes = await env.DB
       .prepare(
-        `SELECT id, title, tagline, kind, category, icon, gradient, status, created_at
+        `SELECT id, title, tagline, description, kind, category, type, platform,
+                icon, gradient, status, repo_url, download_url, images, created_at
          FROM works WHERE username = ?1 ORDER BY created_at DESC, id ASC`
       )
       .bind(user.username)
@@ -49,11 +59,17 @@ export async function onRequestGet({ env, request }) {
         id: String(r.id),
         title: String(r.title || r.id),
         tagline: r.tagline ? String(r.tagline) : "",
+        description: r.description ? String(r.description) : "",
         kind: r.kind ? String(r.kind) : "Developer",
         category: r.category ? String(r.category) : "Other",
+        type: r.type ? String(r.type) : "",
+        platform: r.platform ? String(r.platform) : "",
         icon: r.icon ? String(r.icon) : "sparkles",
         gradient: r.gradient ? String(r.gradient) : "",
         status: r.status ? String(r.status) : "pending",
+        repoUrl: r.repo_url ? String(r.repo_url) : "",
+        downloadUrl: r.download_url ? String(r.download_url) : "",
+        images: parseImagesColumn(r.images),
         createdAt: r.created_at ? String(r.created_at) : null,
       })
     );

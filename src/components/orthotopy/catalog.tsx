@@ -3,9 +3,12 @@
 import { useMemo, useState } from "react";
 import { PackageOpen, SearchX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
 import { usePublish } from "@/components/orthotopy/site-shell";
-import { LoadingGrid, WorkCard } from "@/components/orthotopy/works-explorer";
+import {
+  LoadingGrid,
+  WorkCard,
+  WorkDialog,
+} from "@/components/orthotopy/works-explorer";
 import { useWorks } from "@/hooks/use-works";
 import type { Work } from "@/lib/works";
 
@@ -30,8 +33,14 @@ export function CategoryCatalog({
 }: CategoryCatalogProps) {
   const { data, isLoading } = useWorks();
   const [query, setQuery] = useState("");
+  const [activeWork, setActiveWork] = useState<Work | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const openPublish = usePublish();
-  const { toast } = useToast();
+
+  const onView = (work: Work) => {
+    setActiveWork(work);
+    setDialogOpen(true);
+  };
 
   const scoped = useMemo(() => {
     const all = data ?? [];
@@ -49,13 +58,6 @@ export function CategoryCatalog({
       .toLowerCase()
       .includes(normalized);
   });
-
-  const onView = (work: Work) => {
-    toast({
-      title: "Demo work",
-      description: `Public pages for “${work.title}” are coming soon — this catalog is a preview for now.`,
-    });
-  };
 
   const isEmptyCatalog = !isLoading && scoped.length === 0;
 
@@ -119,6 +121,15 @@ export function CategoryCatalog({
           ))}
         </ul>
       )}
+
+      <WorkDialog
+        work={activeWork}
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          setDialogOpen(next);
+          if (!next) setActiveWork(null);
+        }}
+      />
     </section>
   );
 }
