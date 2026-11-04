@@ -1,44 +1,47 @@
 /**
- * GET /api/github/callback — GitHub OAuth redirect URI.
+ * GET /api/github/callback — GitHub OAuth redirect URI, and the ONLY door
+ * into an Orthotopy account.
  *
  * GitHub sends the developer back here with ?code=…&state=… after the
  * authorization prompt (or ?error=… when they cancel). The flow:
  *
- *   1. The state is looked up in KV — it was minted by
- *      POST /api/profile {action:"github-oauth-start"} and is bound to the
- *      Orthotopy username, the origin to return to and the redirect_uri used.
- *      It is one-time and expires after 10 minutes.
+ *   1. The state is looked up in KV — it was minted by POST /api/session
+ *      {action:"oauth-start"} and is bound to the origin to return to and
+ *      the redirect_uri used. It is one-time and expires after 10 minutes.
+ *      No account is bound: the GitHub authorization itself creates the
+ *      account (or signs the developer back in).
  *   2. The code is exchanged for an access token at github.com.
- *   3. The token reads the GitHub identity: GET /user (login, name) and
+ *   3. The token reads the GitHub identity: GET /user (login, name, id) and
  *      GET /user/emails (primary verified email — scope user:email).
- *   4. The identity is written to the Orthotopy account (github_username,
- *      github_name, github_email). One GitHub profile can only ever be
- *      linked to one account. The avatar is NOT stored — the dashboard
- *      derives it from the login via https://github.com/<login>.png.
- *   5. The access token (scope read:user user:email — read-only, no repo
- *      access) is kept in KV for 30 days so /api/profile's star check can
- *      ask GitHub whether THIS account starred the repo; a star found now
- *      flips publish_access immediately.
- *   6. 302 back to <origin>/dashboard?github=connected — the dashboard sees
- *      the flag, re-syncs the profile and auto-runs the star check.
- *
- * The token is only used for the star check and identity read; it never
- * touches the D1 database and is deleted when the account disconnects.
+ *   4. The account is upserted with username = GitHub login. Stored data:
+ *      username, github_id, display name, email. Nothing else — no
+ *      password exists in this system at all. The avatar is NOT stored; it
+ *      is derived from the login via https://github.com/<login>.png.
+ *   5. A 30-day session token is issued and kept in KV alongside the OAuth
+ *      access token (read-only, no repo scope) so a follow-up star check
+ *      can ask GitHub whether THIS account starred the repo.
+ *   6. The session token travels back to the browser as a ONE-TIME code
+ *      (2-minute TTL in KV) appended to the redirect:
+ *      302 → <origin>/dashboard?github=connected&auth=<code>. The dashboard
+ *      trades it for the token via POST /api/session {action:"exchange"}
+ *      and keeps it in localStorage like any other session.
  *
  * Bindings & variables (same project as /api/profile):
  *   DB                   D1 database (required)
- *   CODES                KV namespace (required — holds the OAuth state)
+ *   CODES                KV namespace (required — OAuth state/login codes)
  *   GITHUB_CLIENT_ID     OAuth App client id (required)
  *   GITHUB_CLIENT_SECRET OAuth App client secret (required)
  *   GH_API_BASE / GITHUB_WEB_BASE  optional overrides for local mock tests
  */
 
 import {
+  createSession,
   ensureProfileSchema,
   githubOauthConfig,
   githubRepo,
   githubTokenKey,
   githubWebBase,
+  generateToken,
 } from "../_shared.js";
 
 const GH_HEADERS = {
@@ -52,8 +55,9 @@ function ghApiBase(env) {
 }
 
 /** 302 back to the dashboard with a short ?github=… status flag. */
-function redirectBack(origin, flag) {
-  const target = `${String(origin || "").replace(/\/+$/, "")}/dashboard?github=${flag}`;
+function redirectBack(origin, flag, loginCode) {
+  let target = `${String(origin || "").replace(/\/+$/, "")}/dashboard?github=${flag}`;
+  if (loginCode) target += `&auth=${encodeURIComponent(loginCode)}`;
   return new Response(null, {
     status: 302,
     headers: { location: target, "cache-control": "no-store" },
@@ -95,11 +99,7 @@ export async function onRequestGet({ request, env }) {
     saved = null;
   }
   const origin = String(saved?.origin ?? "") || fallbackOrigin;
-  const username = String(saved?.username ?? "");
   const redirectUri = String(saved?.redirectUri ?? "") || `${url.origin}/api/github/callback`;
-  if (!username) {
-    return redirectBack(origin, "invalid");
-  }
 
   // --- exchange the authorization code for an access token -------------
   let accessToken = "";
@@ -153,70 +153,96 @@ export async function onRequestGet({ request, env }) {
     return redirectBack(origin, "profile");
   }
 
+  // GitHub logins are case-insensitive; everything downstream keys on the
+  // lowercase form.
   const login = String(ghUser.login).toLowerCase();
 
-  // --- link the identity to the Orthotopy account ----------------------
+  // --- upsert the account (username = GitHub login) ---------------------
   try {
     await ensureProfileSchema(env);
-    const clash = await env.DB
-      .prepare("SELECT username FROM users WHERE github_username = ?1 AND username != ?2 LIMIT 1")
-      .bind(login, username)
-      .first();
-    if (clash) {
-      console.error(`github callback: github profile ${login} already linked to ${clash.username}`);
-      return redirectBack(origin, "taken");
-    }
+    const now = new Date().toISOString();
     await env.DB
       .prepare(
-        `UPDATE users SET github_username = ?1, github_connected_at = ?2,
-         github_name = ?3, github_email = ?4, publish_access = 1
-         WHERE username = ?5`
+        `INSERT INTO users (username, github_id, github_name, github_email,
+                            publish_access, created_at, last_login_at)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)
+         ON CONFLICT(username) DO UPDATE SET
+           github_id = excluded.github_id,
+           github_name = excluded.github_name,
+           github_email = excluded.github_email,
+           last_login_at = excluded.last_login_at,
+           publish_access = 1`
       )
       .bind(
         login,
-        new Date().toISOString(),
+        Number(ghUser.id) || null,
         ghUser.name ? String(ghUser.name) : null,
         primaryEmail,
-        username
+        now
       )
       .run();
   } catch (err) {
-    console.error(`github callback: db update failed: ${err && err.message}`);
+    console.error(`github callback: db upsert failed: ${err && err.message}`);
     return redirectBack(origin, "error");
   }
 
-  // Keep the access token in KV (30 days, refreshed on every connect) so the
-  // star check can ask GitHub whether THIS account starred the repo. That
-  // request is authenticated, so it never trips the challenges/rate limits
-  // that break anonymous stargazer scans from datacenter egress.
+  // Issue the Orthotopy session (30 days) and keep the GitHub access token
+  // in KV so the star check can ask GitHub whether THIS account starred the
+  // repo — an authenticated request that never trips the challenges/rate
+  // limits that break anonymous stargazer scans from datacenter egress.
+  let sessionToken = "";
+  try {
+    sessionToken = await createSession(env, login);
+  } catch (err) {
+    console.error(`github callback: session create failed: ${err && err.message}`);
+    return redirectBack(origin, "error");
+  }
   if (env.CODES && typeof env.CODES.put === "function") {
     try {
-      await env.CODES.put(githubTokenKey(username), accessToken, {
-        expirationTtl: 2_592_000, // 30 days
+      await env.CODES.put(githubTokenKey(login), accessToken, {
+        expirationTtl: 2_592_000, // 30 days, refreshed on every sign-in
       });
     } catch (err) {
       console.error(`github callback: token store failed: ${err && err.message}`);
     }
   }
 
-  // Best-effort star check while the token is at hand — a developer who
-  // starred before connecting unlocks immediately. Any failure here is fine:
-  // the dashboard's auto star check covers the rest.
+  // Best-effort star check while the token is at hand — recorded for the
+  // profile (starred_at). Any failure here is harmless.
   try {
     const starredRes = await fetch(`${ghApiBase(env)}/user/starred/${githubRepo(env)}`, {
       headers: { ...GH_HEADERS, authorization: `Bearer ${accessToken}` },
     });
     if (starredRes.status === 204) {
       await env.DB
-        .prepare(
-          "UPDATE users SET starred_at = COALESCE(starred_at, ?1), publish_access = 1 WHERE username = ?2"
-        )
-        .bind(new Date().toISOString(), username)
+        .prepare("UPDATE users SET starred_at = COALESCE(starred_at, ?1) WHERE username = ?2")
+        .bind(new Date().toISOString(), login)
         .run();
     }
   } catch (err) {
     console.error(`github callback: star check failed: ${err && err.message}`);
   }
 
-  return redirectBack(origin, "connected");
+  // Hand the session to the browser through a one-time code (2 minutes) so
+  // the long-lived token never sits in the address bar or browser history.
+  let loginCode = "";
+  if (env.CODES && typeof env.CODES.put === "function") {
+    try {
+      loginCode = generateToken();
+      await env.CODES.put(
+        `gh:oauth:login:${loginCode}`,
+        JSON.stringify({ username: login, token: sessionToken }),
+        { expirationTtl: 120 }
+      );
+    } catch (err) {
+      console.error(`github callback: login code mint failed: ${err && err.message}`);
+    }
+  }
+  if (!loginCode) {
+    // Extremely unlikely (KV hiccup) — the dashboard just shows the gate
+    // again and the developer taps the button once more.
+    return redirectBack(origin, "connected");
+  }
+
+  return redirectBack(origin, "connected", loginCode);
 }

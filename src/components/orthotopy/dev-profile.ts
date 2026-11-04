@@ -1,14 +1,23 @@
 "use client";
 
 /**
- * Shared client-side helpers for the dev-profile publishing gate.
+ * Shared client-side helpers for the OAuth-only dev account.
  *
- * The server (GET /api/profile) is the source of truth for whether an
- * account has connected GitHub + starred the repo (publishAccess). The last
- * confirmed state is cached in localStorage so the publish dialog and the
- * dashboard keep working across a failed request, and so a developer who
- * already unlocked publishing never gets blocked by a network hiccup.
+ * There is no signup or sign-in form: a GitHub authorization IS the account.
+ * The browser keeps the session (username + bearer token) in localStorage
+ * under AUTH_KEY. The long-lived token never travels in a URL — the OAuth
+ * callback hands it over as a one-time code that exchangeSessionCode trades
+ * for the real session via POST /api/session.
+ *
+ * The server (GET /api/profile) is the source of truth for the profile and
+ * the publish gate. The last confirmed state is cached in localStorage so
+ * the publish dialog and the dashboard keep working across a failed request.
  */
+
+export const AUTH_KEY = "orthotopy_dev_auth";
+export const AUTH_EVENT = "orthotopy:auth";
+export const PROFILE_KEY = "orthotopy_dev_profile";
+export const REPO_URL = "https://github.com/reorthotope/Orthotopy";
 
 export interface DevProfile {
   githubConnected: boolean;
@@ -19,17 +28,63 @@ export interface DevProfile {
   publishAccess: boolean;
 }
 
+export interface DevAuth {
+  username: string;
+  token: string;
+  createdAt?: string;
+}
+
 /**
  * GitHub serves each member's avatar straight from their login —
  * https://github.com/<login>.png redirects to the CDN image. So the avatar
- * needs no database column: it is derived from the stored github_username.
+ * needs no database column: it is derived from the username (= the login).
  */
 export function githubAvatarSrc(username: string): string {
   return `https://github.com/${encodeURIComponent(username)}.png`;
 }
 
-export const PROFILE_KEY = "orthotopy_dev_profile";
-export const REPO_URL = "https://github.com/reorthotope/Orthotopy";
+/** Reads the stored session, or null when signed out / malformed. */
+export function readAuth(): DevAuth | null {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DevAuth>;
+    if (!parsed.username) return null;
+    return {
+      username: parsed.username,
+      token: parsed.token || "",
+      createdAt: parsed.createdAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Writes the session and tells every listening component to re-sync. */
+export function storeAuth(auth: DevAuth) {
+  try {
+    localStorage.setItem(
+      AUTH_KEY,
+      JSON.stringify({
+        username: auth.username,
+        token: auth.token,
+        createdAt: auth.createdAt || new Date().toISOString(),
+      })
+    );
+    window.dispatchEvent(new Event(AUTH_EVENT));
+  } catch {
+    // Storage unavailable (private mode) — the session just won't persist.
+  }
+}
+
+export function clearAuth() {
+  try {
+    localStorage.removeItem(AUTH_KEY);
+    window.dispatchEvent(new Event(AUTH_EVENT));
+  } catch {
+    // ignore
+  }
+}
 
 function normalizeProfile(raw: Partial<DevProfile> | null | undefined): DevProfile {
   return {
@@ -73,8 +128,6 @@ export function clearCachedProfile() {
 export interface ProfileFetchResult {
   status: "ok" | "unauthorized" | "unreachable";
   profile: DevProfile | null;
-  /** True when the server has GITHUB_CLIENT_ID/SECRET set → OAuth connect. */
-  oauthConfigured: boolean;
 }
 
 /** Fetches the live profile state with a bearer session token. */
@@ -84,26 +137,20 @@ export async function fetchProfile(token: string): Promise<ProfileFetchResult> {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
     if (res.status === 401) {
-      return { status: "unauthorized", profile: null, oauthConfigured: true };
+      return { status: "unauthorized", profile: null };
     }
     const data = (await res.json().catch(() => null)) as {
       ok?: boolean;
       profile?: Partial<DevProfile>;
-      githubOauth?: { configured?: boolean };
     } | null;
     if (res.ok && data?.ok && data.profile) {
       const profile = normalizeProfile(data.profile);
       cacheProfile(profile);
-      return {
-        status: "ok",
-        profile,
-        // Default true: an older backend without the flag still prefers OAuth.
-        oauthConfigured: data.githubOauth?.configured !== false,
-      };
+      return { status: "ok", profile };
     }
-    return { status: "unreachable", profile: null, oauthConfigured: true };
+    return { status: "unreachable", profile: null };
   } catch {
-    return { status: "unreachable", profile: null, oauthConfigured: true };
+    return { status: "unreachable", profile: null };
   }
 }
 
@@ -112,11 +159,9 @@ export interface ProfileActionResult {
   error?: string;
   message?: string;
   profile?: DevProfile;
-  /** Star check hit GitHub's anonymous-IP wall — reconnecting fixes it. */
-  reconnect?: boolean;
 }
 
-/** POSTs a profile action ("github-oauth-start" | "check-star" | "disconnect-github" | …). */
+/** POSTs an authenticated profile action (currently "delete-account"). */
 export async function postProfileAction(
   token: string,
   body: Record<string, unknown>
@@ -134,29 +179,18 @@ export async function postProfileAction(
       ok?: boolean;
       error?: string;
       message?: string;
-      starred?: boolean;
-      authorizeUrl?: string;
-      oauthConfigured?: boolean;
-      reconnect?: boolean;
       profile?: Partial<DevProfile>;
     } | null;
     if (res.ok && data?.ok) {
-      // check-star can legitimately return ok WITHOUT a profile (the star
-      // isn't visible yet) — surface the server's message in that case.
-      if (data.profile) {
-        return {
-          ok: true,
-          message: data.message,
-          profile: normalizeProfile(data.profile),
-        };
-      }
-      return { ok: true, message: data.message };
+      return {
+        ok: true,
+        message: data.message,
+        profile: data.profile ? normalizeProfile(data.profile) : undefined,
+      };
     }
     return {
       ok: false,
       error: data?.error || "Something went wrong — please try again.",
-      message: data?.oauthConfigured === false ? "oauth-unconfigured" : undefined,
-      reconnect: data?.reconnect === true,
     };
   } catch {
     return {
@@ -175,20 +209,19 @@ export interface OauthStartResult {
 }
 
 /**
- * Asks the server to mint a one-time OAuth state bound to this account and
- * returns the github.com authorize URL. The caller redirects the browser to
- * it; GitHub then comes back to /api/github/callback.
+ * Asks the server to mint a one-time OAuth state and returns the github.com
+ * authorize URL. No signed-in account is required — the GitHub authorization
+ * itself creates (or finds) the account. The caller redirects the browser to
+ * the URL; GitHub comes back to /api/github/callback, which lands on
+ * /dashboard?github=connected&auth=<one-time-code>.
  */
-export async function startGithubOauth(token: string): Promise<OauthStartResult> {
+export async function startGithubOauth(): Promise<OauthStartResult> {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   try {
-    const res = await fetch("/api/profile", {
+    const res = await fetch("/api/session", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ action: "github-oauth-start", origin }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "oauth-start", origin }),
     });
     const data = (await res.json().catch(() => null)) as {
       ok?: boolean;
@@ -202,12 +235,46 @@ export async function startGithubOauth(token: string): Promise<OauthStartResult>
     return {
       ok: false,
       notConfigured: data?.oauthConfigured === false,
-      error: data?.error || "We couldn't start the GitHub connection — please try again.",
+      error: data?.error || "We couldn't start the GitHub sign-in — please try again.",
     };
   } catch {
     return {
       ok: false,
       error: "Network error — we couldn't reach the server. Check your connection and try again.",
     };
+  }
+}
+
+export interface ExchangeResult {
+  ok: boolean;
+  auth?: DevAuth;
+  error?: string;
+}
+
+/**
+ * Trades the one-time code from the OAuth redirect for the real session and
+ * stores it. Returns the stored auth so the caller can continue signed in.
+ */
+export async function exchangeSessionCode(code: string): Promise<ExchangeResult> {
+  try {
+    const res = await fetch("/api/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "exchange", code }),
+    });
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      username?: string;
+      token?: string;
+      error?: string;
+    } | null;
+    if (res.ok && data?.ok && data.username && data.token) {
+      const auth: DevAuth = { username: data.username, token: data.token };
+      storeAuth(auth);
+      return { ok: true, auth };
+    }
+    return { ok: false, error: data?.error || "We couldn't finish the sign-in — please try again." };
+  } catch {
+    return { ok: false, error: "Network error — we couldn't reach the server. Check your connection and try again." };
   }
 }

@@ -39,7 +39,7 @@ export async function onRequestGet({ env, request }) {
 
     const worksRes = await env.DB
       .prepare(
-        `SELECT id, title, tagline, kind, category, icon, gradient, created_at
+        `SELECT id, title, tagline, kind, category, icon, gradient, status, created_at
          FROM works WHERE username = ?1 ORDER BY created_at DESC, id ASC`
       )
       .bind(user.username)
@@ -53,6 +53,7 @@ export async function onRequestGet({ env, request }) {
         category: r.category ? String(r.category) : "Other",
         icon: r.icon ? String(r.icon) : "sparkles",
         gradient: r.gradient ? String(r.gradient) : "",
+        status: r.status ? String(r.status) : "pending",
         createdAt: r.created_at ? String(r.created_at) : null,
       })
     );

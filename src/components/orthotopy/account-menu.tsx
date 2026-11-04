@@ -4,10 +4,10 @@
  * Account avatar + dropdown for signed-in developers, shown in the navbar in
  * place of the old "Dashboard" button.
  *
- * Avatar: the GitHub profile picture once GitHub is connected, otherwise the
- * developer's initials until they connect. The dropdown shows the account
- * username, a developer-level placeholder and navigation (Dashboard,
- * Settings, Sign out).
+ * Auth is OAuth-only, so a session always carries a GitHub identity: the
+ * avatar is the GitHub profile picture (derived from the login), the label
+ * is @username. The dropdown shows the username, a developer-level
+ * placeholder and navigation (Dashboard, Settings, Sign out).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -22,33 +22,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  AUTH_EVENT,
+  clearAuth,
   clearCachedProfile,
   fetchProfile,
   githubAvatarSrc,
+  readAuth,
   readCachedProfile,
   type DevProfile,
 } from "./dev-profile";
 
-const AUTH_KEY = "orthotopy_dev_auth";
-const AUTH_EVENT = "orthotopy:auth";
 const PROFILE_EVENT = "orthotopy:profile";
-
-interface AccountState {
-  username: string;
-  token: string;
-}
-
-function readAccount(): AccountState | null {
-  try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { username?: string; token?: string };
-    if (!parsed.username) return null;
-    return { username: parsed.username, token: parsed.token || "" };
-  } catch {
-    return null;
-  }
-}
 
 function initialsOf(username: string): string {
   const clean = username.replace(/[^a-zA-Z0-9]/g, "").trim();
@@ -57,12 +41,12 @@ function initialsOf(username: string): string {
 
 export function AccountMenu() {
   const router = useRouter();
-  const [account, setAccount] = useState<AccountState | null>(null);
+  const [account, setAccount] = useState<{ username: string; token: string } | null>(null);
   const [profile, setProfile] = useState<DevProfile | null>(null);
 
   const sync = useCallback(async () => {
-    const current = readAccount();
-    setAccount(current);
+    const current = readAuth();
+    setAccount(current ? { username: current.username, token: current.token } : null);
     setProfile(readCachedProfile());
     if (!current?.token) return;
     const result = await fetchProfile(current.token);
@@ -71,11 +55,7 @@ export function AccountMenu() {
     } else if (result.status === "unauthorized") {
       // Session expired — drop the stale auth so the navbar falls back to
       // the Join CTA and the dashboard can show the sign-in flow again.
-      try {
-        localStorage.removeItem(AUTH_KEY);
-      } catch {
-        // ignore
-      }
+      clearAuth();
       clearCachedProfile();
       setAccount(null);
       setProfile(null);
@@ -103,13 +83,8 @@ export function AccountMenu() {
       : null;
 
   const signOut = () => {
-    try {
-      localStorage.removeItem(AUTH_KEY);
-    } catch {
-      // ignore
-    }
+    clearAuth();
     clearCachedProfile();
-    window.dispatchEvent(new Event(AUTH_EVENT));
     router.push("/");
   };
 

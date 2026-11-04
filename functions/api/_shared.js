@@ -1,31 +1,27 @@
 /**
  * Shared helpers for the Orthotopy Pages Functions.
- * Imported by functions/api/request-code.js, verify.js, login.js and profile.js.
+ * Imported by functions/api/session.js, profile.js, works.js, my-works.js,
+ * track.js and github/callback.js.
+ *
+ * Auth model (OAuth-only): there is no signup, no sign-in form and no
+ * password anywhere in the project. A developer joins by authorizing their
+ * GitHub profile once; /api/github/callback upserts the account (username =
+ * GitHub login, email = GitHub email) and issues the session token that the
+ * browser keeps in localStorage as a bearer token.
  */
 
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const DIGITS = "0123456789";
-
-export const CODE_TTL_SECONDS = 600; // codes live for 10 minutes
-export const MAX_ATTEMPTS = 5;
-export const RESEND_COOLDOWN_MS = 45_000;
-
-export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const PHONE_RE = /^\+?[0-9](?:[0-9\s-]{5,17})[0-9]$/;
-
-// The repository developers must star before their first publish.
+// The repository developers are asked to star before their first publish.
 // Override with the GITHUB_REPO variable (e.g. for local testing).
 export function githubRepo(env) {
   const repo = String(env?.GITHUB_REPO ?? "").trim();
   return /^[^\s/]+\/[^\s/]+$/.test(repo) ? repo : "reorthotope/Orthotopy";
 }
 
-// --- GitHub OAuth (the trusted way to connect a developer's identity) ---
+// --- GitHub OAuth (the only way to create an account / sign in) -----------
 
 /**
  * OAuth is active as soon as both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
- * are configured. Until then /api/profile keeps the manual-username fallback
- * so the site keeps working before the credentials are added.
+ * are configured.
  */
 export function githubOauthConfig(env) {
   const clientId = String(env?.GITHUB_CLIENT_ID ?? "").trim();
@@ -46,46 +42,14 @@ export const GITHUB_OAUTH_SCOPES = "read:user user:email";
 
 /**
  * KV key holding the developer's GitHub OAuth access token (scope
- * read:user user:email only). Stored by /api/github/callback so the star
- * check can ask GitHub directly whether THIS account starred the repo —
- * exact, and immune to the IP challenges/rate limits that hit anonymous
- * stargazer requests from datacenter egress (Cloudflare Workers included).
- * Deleted when the account disconnects GitHub.
+ * read:user user:email only). Stored by /api/github/callback so the callback
+ * can ask GitHub directly whether THIS account starred the repo — exact, and
+ * immune to the IP challenges/rate limits that hit anonymous stargazer
+ * requests from datacenter egress (Cloudflare Workers included). Deleted
+ * when the account is deleted.
  */
 export function githubTokenKey(username) {
   return `gh:oauth:token:${String(username || "").toLowerCase()}`;
-}
-
-/**
- * Username policy (mirror of src/lib/verification.ts — keep both in sync):
- *  - always lowercase (the frontend lowercases as the user types)
- *  - 3–20 characters
- *  - lowercase letters, numbers, dots (.), hyphens (-) and underscores (_)
- *  - commas and spaces are never allowed
- *  - must START with a letter (no number, no symbol, no period)
- *  - must END with a letter or number (no symbol or period)
- *
- * Returns the specific reason when invalid, or null when acceptable.
- */
-export function usernameError(raw) {
-  const u = String(raw ?? "");
-  if (!u) return "Choose a username.";
-  if (/[A-Z]/.test(u)) return "Usernames are lowercase only.";
-  if (/\s/.test(u)) return "Spaces are not allowed in usernames.";
-  if (u.includes(",")) return "Commas are not allowed in usernames.";
-  if (u.length < 3) return "Username must be at least 3 characters.";
-  if (u.length > 20) return "Username can be at most 20 characters.";
-  if (!/^[a-z0-9._-]+$/.test(u)) {
-    return "Only lowercase letters, numbers, dots (.), hyphens (-) and underscores (_) are allowed.";
-  }
-  if (/[0-9]/.test(u.charAt(0))) return "Usernames can't start with a number.";
-  if (!/^[a-z]/.test(u)) {
-    return "Usernames must start with a letter — no symbols, dots or hyphens at the start.";
-  }
-  if (!/[a-z0-9]$/.test(u)) {
-    return "Usernames can't end with a symbol or period — it must end with a letter or number.";
-  }
-  return null;
 }
 
 export function json(data, status = 200) {
@@ -98,148 +62,14 @@ export function json(data, status = 200) {
   });
 }
 
-function pick(alphabet) {
-  return alphabet[crypto.getRandomValues(new Uint32Array(1))[0] % alphabet.length];
-}
-
-/**
- * 6-character code: 2 random letters (A-Z) then 4 random digits (0-9).
- * Same LLDDDD format as src/lib/verification.ts on the frontend.
- */
-export function generateCode() {
-  return (
-    pick(LETTERS) +
-    pick(LETTERS) +
-    pick(DIGITS) +
-    pick(DIGITS) +
-    pick(DIGITS) +
-    pick(DIGITS)
-  );
-}
-
-/**
- * Turnstile is enforced as soon as TURNSTILE_SECRET_KEY is configured; until
- * then the check is skipped (test mode) so local dev and staging keep working.
- */
-export async function verifyTurnstile(secret, token, ip) {
-  if (!secret) return true;
-  if (!token) return false;
-  const body = new URLSearchParams({ secret, response: token });
-  if (ip) body.set("remoteip", ip);
-  try {
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      body,
-    });
-    const data = await res.json();
-    return data.success === true;
-  } catch {
-    return false;
-  }
-}
-
-export function codeEmailHtml(code) {
-  return `<!doctype html>
-<html><body style="margin:0;padding:0;background:#f4f5f7;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <tr><td style="font-size:20px;font-weight:700;color:#111827;padding-bottom:4px;">Orthotopy</td></tr>
-        <tr><td style="font-size:14px;color:#374151;padding-bottom:24px;">Every work in its right place.</td></tr>
-        <tr><td style="font-size:15px;color:#111827;padding-bottom:16px;">Your verification code:</td></tr>
-        <tr><td align="center" style="padding-bottom:24px;">
-          <div style="display:inline-block;font-size:34px;font-weight:700;letter-spacing:10px;color:#111827;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:12px;padding:16px 28px;">${code}</div>
-        </td></tr>
-        <tr><td style="font-size:13px;color:#6b7280;line-height:1.6;">This code expires in 10 minutes. Enter it on the Join the Dev Team page.<br/>If you didn&#39;t request it, you can safely ignore this email.</td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
-}
-
-// --- password hashing: PBKDF2-SHA256 via WebCrypto (no runtime dependencies) ---
-const PBKDF2_ITERATIONS = 100_000;
-
-function bytesToHex(buffer) {
-  return [...new Uint8Array(buffer)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function hexToBytes(hex) {
-  const clean = String(hex ?? "");
-  const out = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-/** Returns "pbkdf2-sha256$<iterations>$<salt-hex>$<hash-hex>". */
-export async function hashPassword(password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations: PBKDF2_ITERATIONS },
-    key,
-    256
-  );
-  return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${bytesToHex(salt)}$${bytesToHex(bits)}`;
-}
-
-/**
- * Constant-time check of a plain password against a stored
- * "pbkdf2-sha256$<iterations>$<salt-hex>$<hash-hex>" string (as written by
- * hashPassword / verify.js). Older or unknown formats simply fail.
- */
-export async function verifyPassword(password, stored) {
-  try {
-    const parts = String(stored ?? "").split("$");
-    if (parts.length !== 4 || parts[0] !== "pbkdf2-sha256") return false;
-    const iterations = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(iterations) || iterations < 1 || iterations > 5_000_000) {
-      return false;
-    }
-    const salt = hexToBytes(parts[2]);
-    const expected = parts[3];
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(String(password ?? "")),
-      "PBKDF2",
-      false,
-      ["deriveBits"]
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: "PBKDF2", hash: "SHA-256", salt, iterations },
-      key,
-      256
-    );
-    const actual = bytesToHex(bits);
-    if (actual.length !== expected.length) return false;
-    let diff = 0;
-    for (let i = 0; i < actual.length; i++) {
-      diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
-    }
-    return diff === 0;
-  } catch {
-    return false;
-  }
+export function generateToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // --- sessions: opaque bearer tokens so profile endpoints know the caller ---
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-export function generateToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /**
  * Creates a session row and returns the bearer token. `expires_at` is stored
@@ -269,9 +99,8 @@ export async function getSessionUser(env, request) {
   if (!match || !env.DB || typeof env.DB.prepare !== "function") return null;
   try {
     return await env.DB.prepare(
-      `SELECT u.nickname, u.username, u.email, u.github_username,
-              u.github_connected_at, u.github_name, u.github_email,
-              u.starred_at, u.publish_access, u.created_at
+      `SELECT u.username, u.github_id, u.github_name, u.github_email,
+              u.starred_at, u.publish_access, u.created_at, u.last_login_at
        FROM sessions s JOIN users u ON u.username = s.username
        WHERE s.token = ?1 AND s.expires_at > ?2
        LIMIT 1`
@@ -284,30 +113,36 @@ export async function getSessionUser(env, request) {
 }
 
 /**
- * Self-healing schema for accounts + profile/publish-gate columns. Creating
+ * Self-healing schema for OAuth-only accounts + published works. Creating
  * the tables here means binding a fresh D1 database is enough — no manual
- * migration step required (mirrors migrations/0001_users.sql and
- * migrations/0002_github_profile.sql).
+ * migration step required.
+ *
+ * The users table holds ONLY what GitHub told us: username (= GitHub login),
+ * github_id, display name and email. No passwords, no nicknames, no locally
+ * chosen names — nothing to leak. Databases from the signup/sign-in era are
+ * rebuilt in place: password/nickname columns are dropped for good and
+ * GitHub-linked accounts keep working under their GitHub login.
  */
+
+// D1's client API has no reliable PRAGMA, so the table shape is detected by
+// probing columns. The result is memoized per isolate — after the first
+// successful pass the checks are skipped entirely.
+let schemaReady = false;
+
+/** true: column selectable; "no-table": users table missing; false: no column. */
+async function probeColumn(env, column) {
+  try {
+    await env.DB.prepare(`SELECT ${column} FROM users LIMIT 1`).all();
+    return true;
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    if (/no such table/i.test(msg)) return "no-table";
+    return false;
+  }
+}
+
 export async function ensureProfileSchema(env) {
-  await env.DB.prepare(
-    `CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nickname TEXT,
-      username TEXT NOT NULL UNIQUE,
-      email TEXT NOT NULL UNIQUE,
-      phone TEXT,
-      password_hash TEXT NOT NULL,
-      email_verified INTEGER NOT NULL DEFAULT 0,
-      github_username TEXT,
-      github_connected_at TEXT,
-      github_name TEXT,
-      github_email TEXT,
-      starred_at TEXT,
-      publish_access INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`
-  ).run();
+  if (schemaReady) return;
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -316,9 +151,9 @@ export async function ensureProfileSchema(env) {
       expires_at TEXT NOT NULL
     )`
   ).run();
-  // Published works owned by accounts. Rows are inserted by the publishing
-  // pipeline once a submitted work is approved; the dashboard reads them
-  // through /api/my-works.
+  // Published works owned by accounts. Rows are inserted by POST /api/works
+  // when a developer submits a work (status 'pending' until the catalog
+  // issue merges); the dashboard reads them through /api/my-works.
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS works (
       id TEXT PRIMARY KEY,
@@ -329,12 +164,27 @@ export async function ensureProfileSchema(env) {
       category TEXT NOT NULL DEFAULT 'Other',
       icon TEXT NOT NULL DEFAULT 'sparkles',
       gradient TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`
   ).run();
   await env.DB.prepare(
     "CREATE INDEX IF NOT EXISTS idx_works_username ON works(username)"
   ).run();
+  // Databases created before the pending/live distinction: add the status
+  // column in place.
+  try {
+    await env.DB.prepare("SELECT status FROM works LIMIT 1").all();
+  } catch {
+    try {
+      await env.DB.prepare(
+        "ALTER TABLE works ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"
+      ).run();
+    } catch (err) {
+      const msg = String((err && err.message) || "");
+      if (!/duplicate column|already exists/i.test(msg)) throw err;
+    }
+  }
   // Daily view/download counters per work (UTC days). Incremented by
   // POST /api/track; aggregated by /api/my-works for the dashboard graphs.
   await env.DB.prepare(
@@ -346,20 +196,143 @@ export async function ensureProfileSchema(env) {
       PRIMARY KEY (work_id, day)
     )`
   ).run();
-  // Older databases were created before the GitHub-profile columns existed.
-  for (const sql of [
-    "ALTER TABLE users ADD COLUMN github_username TEXT",
-    "ALTER TABLE users ADD COLUMN github_connected_at TEXT",
-    "ALTER TABLE users ADD COLUMN github_name TEXT",
-    "ALTER TABLE users ADD COLUMN github_email TEXT",
-    "ALTER TABLE users ADD COLUMN starred_at TEXT",
-    "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0",
+
+  const tableState = await probeColumn(env, "username");
+
+  if (tableState === "no-table") {
+    // Fresh database — create the OAuth-only shape directly.
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        github_id INTEGER,
+        github_name TEXT,
+        github_email TEXT,
+        starred_at TEXT,
+        publish_access INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_login_at TEXT
+      )`
+    ).run();
+    schemaReady = true;
+    return;
+  }
+
+  // password_hash is the defining column of the signup/sign-in era.
+  const isLegacy = tableState === true
+    ? (await probeColumn(env, "password_hash")) === true
+    : false;
+
+  if (isLegacy) {
+    // Legacy table from the signup/sign-in era. Rebuild without the
+    // password/nickname columns (they are gone for good — data safety) and
+    // normalize the username to the GitHub login where one was linked, so
+    // existing sessions/works keep resolving after the next sign-in.
+    // Column list is probed because legacy shapes varied over time.
+    const want = {
+      nickname: false,
+      github_username: false,
+      github_connected_at: false,
+      github_name: false,
+      github_email: false,
+      email: false,
+      starred_at: false,
+      publish_access: false,
+      created_at: false,
+    };
+    const present = {};
+    for (const col of Object.keys(want)) {
+      present[col] = (await probeColumn(env, col)) === true;
+    }
+    const selectList = ["username", ...Object.keys(present).filter((c) => present[c])];
+    const legacy = await env.DB
+      .prepare(`SELECT ${selectList.join(", ")} FROM users`)
+      .all();
+    const rows = Array.isArray(legacy?.results) ? legacy.results : [];
+    // GitHub-linked rows first so they win any (impossible-in-practice)
+    // username collision against password-only rows.
+    rows.sort((a, b) => Number(Boolean(b.github_username)) - Number(Boolean(a.github_username)));
+
+    const renames = [];
+    const seen = new Set();
+    const values = [];
+    for (const r of rows) {
+      const oldName = String(r.username ?? "");
+      const linked = present.github_username && r.github_username
+        ? String(r.github_username).toLowerCase()
+        : "";
+      const newName = linked || oldName.toLowerCase();
+      if (!oldName || seen.has(newName)) continue;
+      seen.add(newName);
+      if (newName !== oldName) renames.push([oldName, newName]);
+      values.push([
+        newName,
+        null,
+        r.github_name ? String(r.github_name) : null,
+        r.github_email ? String(r.github_email) : present.email && r.email ? String(r.email) : null,
+        r.starred_at ? String(r.starred_at) : null,
+        (!present.publish_access || Number(r.publish_access) === 1) ? 1 : 0,
+        r.created_at ? String(r.created_at) : new Date().toISOString(),
+      ]);
+    }
+
+    await env.DB.prepare("DROP TABLE IF EXISTS users_oauth_v2").run();
+    await env.DB.prepare(
+      `CREATE TABLE users_oauth_v2 (
+        username TEXT PRIMARY KEY,
+        github_id INTEGER,
+        github_name TEXT,
+        github_email TEXT,
+        starred_at TEXT,
+        publish_access INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_login_at TEXT
+      )`
+    ).run();
+    const inserts = values.map((v) =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO users_oauth_v2
+         (username, github_id, github_name, github_email, starred_at, publish_access, created_at, last_login_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)`
+      ).bind(...v)
+    );
+    if (inserts.length > 0) await env.DB.batch(inserts);
+    await env.DB.batch([
+      env.DB.prepare("DROP TABLE users"),
+      env.DB.prepare("ALTER TABLE users_oauth_v2 RENAME TO users"),
+    ]);
+
+    // Point existing sessions and works at the normalized username.
+    for (const [oldName, newName] of renames) {
+      try {
+        await env.DB.batch([
+          env.DB.prepare("UPDATE sessions SET username = ?1 WHERE username = ?2").bind(newName, oldName),
+          env.DB.prepare("UPDATE works SET username = ?1 WHERE username = ?2").bind(newName, oldName),
+        ]);
+      } catch (err) {
+        console.error(`schema: session/work rename failed for ${oldName}: ${err && err.message}`);
+      }
+    }
+    console.log(`schema: legacy users table rebuilt without password data (${values.length} accounts)`);
+    schemaReady = true;
+    return;
+  }
+
+  // GitHub-era table without the password columns — make sure the newer
+  // columns exist (older databases predate github_id/last_login_at).
+  for (const [col, ddl] of [
+    ["github_id", "ALTER TABLE users ADD COLUMN github_id INTEGER"],
+    ["last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TEXT"],
+    ["starred_at", "ALTER TABLE users ADD COLUMN starred_at TEXT"],
+    ["publish_access", "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0"],
+    ["created_at", "ALTER TABLE users ADD COLUMN created_at TEXT"],
   ]) {
+    if ((await probeColumn(env, col)) === true) continue;
     try {
-      await env.DB.prepare(sql).run();
+      await env.DB.prepare(ddl).run();
     } catch (err) {
       const msg = String((err && err.message) || "");
       if (!/duplicate column|already exists/i.test(msg)) throw err;
     }
   }
+  schemaReady = true;
 }

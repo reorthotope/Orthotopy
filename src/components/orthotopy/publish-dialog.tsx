@@ -24,13 +24,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { CATEGORIES, CATEGORY_ICONS, KINDS, gradientFor } from "@/lib/works";
 import { CheckCircle2, Circle, Github, Loader2 } from "lucide-react";
-import { fetchProfile, readCachedProfile, type DevProfile } from "./dev-profile";
+import {
+  fetchProfile,
+  readAuth,
+  readCachedProfile,
+  type DevProfile,
+} from "./dev-profile";
 
 const CATALOG_URL =
   "https://github.com/reorthotope/Orthotopy/blob/main/public/catalog/works.json";
 const NEW_ISSUE_URL = "https://github.com/reorthotope/Orthotopy/issues/new";
-
-const AUTH_KEY = "orthotopy_dev_auth";
 
 interface PublishDialogProps {
   open: boolean;
@@ -38,12 +41,11 @@ interface PublishDialogProps {
 }
 
 /**
- * Publishing gate: creating an account is required, and before the FIRST
- * work the account must have connected GitHub and starred the repository
- * (verified server-side). The dialog resolves the current state every time
- * it opens: no account → join prompt; account without setup → checklist;
- * unlocked → the publish form. Once unlocked, the state is also cached in
- * localStorage so an offline hiccup never re-locks the form.
+ * Publishing gate: there is no signup — the account IS a GitHub
+ * authorization. The dialog resolves the current state every time it opens:
+ * no session → join prompt; session whose profile isn't confirmed yet →
+ * checklist; unlocked → the publish form. Once unlocked, the state is also
+ * cached in localStorage so an offline hiccup never re-locks the form.
  */
 type Gate = "checking" | "no-account" | "locked" | "ready";
 
@@ -71,14 +73,8 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
     setNeedsSignin(false);
 
     const resolve = async () => {
-      let auth: { token?: string } | null = null;
-      try {
-        const raw = localStorage.getItem(AUTH_KEY);
-        auth = raw ? (JSON.parse(raw) as { token?: string }) : null;
-      } catch {
-        auth = null;
-      }
-      if (!auth) {
+      const auth = readAuth();
+      if (!auth?.token) {
         if (!cancelled) setGate("no-account");
         return;
       }
@@ -88,24 +84,23 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
         setProfile(cached);
         setGate("ready");
       }
-      if (auth.token) {
-        const result = await fetchProfile(auth.token);
-        if (cancelled) return;
-        if (result.status === "ok" && result.profile) {
-          setProfile(result.profile);
-          setGate(result.profile.publishAccess ? "ready" : "locked");
-          return;
-        }
+      const result = await fetchProfile(auth.token);
+      if (cancelled) return;
+      if (result.status === "ok" && result.profile) {
+        setProfile(result.profile);
+        setGate(result.profile.publishAccess ? "ready" : "locked");
+        return;
       }
-      // No token (older signup) or the request failed — fall back to cache.
+      // The request failed (or the session just expired) — fall back to the
+      // cached gate state so a network hiccup doesn't re-lock the form.
       if (cancelled) return;
       if (cached) {
         setProfile(cached);
-        setNeedsSignin(!auth.token && !cached.publishAccess);
+        setNeedsSignin(!cached.publishAccess);
         setGate(cached.publishAccess ? "ready" : "locked");
       } else {
         setProfile(null);
-        setNeedsSignin(!auth.token);
+        setNeedsSignin(true);
         setGate("locked");
       }
     };
@@ -118,9 +113,13 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
   /**
    * The catalog is a static JSON file in the repository, so "publishing"
    * opens a prefilled GitHub issue with the ready-to-merge JSON entry.
-   * Merging it (and redeploing) lists the work on the live site.
+   * Merging it (and redeploing) lists the work on the live site. The work is
+   * also recorded in D1 (status 'pending') so it shows up in the developer's
+   * dashboard right away — POST /api/works; a failure there never blocks the
+   * issue (the issue remains the source of truth).
    */
-  const publish = () => {
+  const publish = async () => {
+    const auth = readAuth();
     const entry = {
       title: title.trim(),
       tagline: tagline.trim(),
@@ -142,6 +141,28 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
       "",
       `Catalog file: ${CATALOG_URL}`,
     ].join("\n");
+    if (auth?.token) {
+      try {
+        await fetch("/api/works", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${auth.token}`,
+          },
+          body: JSON.stringify({
+            title: entry.title,
+            tagline: entry.tagline,
+            kind: entry.kind,
+            category: entry.category,
+            icon: entry.icon,
+            gradient: entry.gradient,
+          }),
+        });
+      } catch {
+        // The dashboard row is a convenience — the GitHub issue is what
+        // publishes the work, so never block on this.
+      }
+    }
     const url = `${NEW_ISSUE_URL}?title=${encodeURIComponent(
       `[Publish] ${entry.title}`
     )}&body=${encodeURIComponent(body)}`;
@@ -153,7 +174,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
     toast({
       title: "Opening GitHub",
       description:
-        "Submit the prefilled issue (or turn it into a pull request) — once merged into the catalog, the work goes live.",
+        "Submit the prefilled issue (or turn it into a pull request) — the work is already on your dashboard as pending and goes live once the issue merges.",
     });
   };
 
@@ -188,24 +209,23 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
         ) : gate === "no-account" ? (
           <>
             <DialogHeader>
-              <DialogTitle>Create your developer account first</DialogTitle>
+              <DialogTitle>Join with GitHub first</DialogTitle>
               <DialogDescription>
-                Publishing on Orthotopy starts with a free account: verify your
-                email and connect your GitHub profile — then publish as many
-                works as you like.
+                There is no signup form — a GitHub authorization IS the
+                account. One tap verifies your developer identity, opens your
+                dashboard and unlocks publishing.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="flex-col gap-2 sm:flex-col">
               <Button asChild className="w-full">
                 <Link href="/dev" onClick={() => onOpenChange(false)}>
                   <Github className="size-4" aria-hidden="true" />
-                  Join the Dev Team
+                  Join with GitHub
                 </Link>
               </Button>
               <p className="text-center text-xs text-muted-foreground">
-                Already joined? On that page, tap{" "}
-                <strong className="text-foreground">“Already joined? Sign in”</strong>{" "}
-                under the Continue button.
+                Only your username, display name and email are read — read-only,
+                nothing posted. No password is ever created or stored.
               </p>
             </DialogFooter>
           </>
@@ -214,22 +234,22 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             <DialogHeader>
               <DialogTitle>One quick step before your first publish</DialogTitle>
               <DialogDescription>
-                Before your first work, connect your GitHub profile — it
-                verifies your developer identity and keeps the catalog real.
-                You only do this once.
+                Before your first work, sign in with GitHub — it verifies your
+                developer identity and keeps the catalog real. You only do
+                this once.
               </DialogDescription>
             </DialogHeader>
             <ul className="space-y-2.5 rounded-xl border bg-card p-4">
               {gateRow(
                 Boolean(profile?.githubConnected),
-                "Connect your GitHub profile",
+                "Sign in with GitHub",
                 "do this from your dashboard"
               )}
             </ul>
             {needsSignin ? (
               <p className="text-xs text-muted-foreground">
-                Your session is out of date — sign in again from the dashboard
-                to sync your profile.
+                Your session is out of date — one tap on the dashboard button
+                signs you back in.
               </p>
             ) : null}
             <DialogFooter className="flex-col gap-2 sm:flex-col">
@@ -239,7 +259,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
                 </Link>
               </Button>
               <p className="text-center text-xs text-muted-foreground">
-                Both checks turn green the moment the server confirms them.
+                The check turns green the moment the server confirms it.
               </p>
             </DialogFooter>
           </>
@@ -256,7 +276,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
               className="grid gap-4"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (valid) publish();
+                if (valid) void publish();
               }}
             >
               <div className="grid gap-2">
