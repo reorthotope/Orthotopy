@@ -26,8 +26,10 @@ import {
   postProfileAction,
   readCachedProfile,
   clearCachedProfile,
+  startGithubOauth,
   REPO_URL,
   type DevProfile,
+  type ProfileActionResult,
 } from "./dev-profile";
 
 /**
@@ -82,42 +84,49 @@ export function DeveloperDashboard() {
   const [profileState, setProfileState] = useState<
     "loading" | "live" | "stale" | "unauthorized" | "none"
   >("loading");
+  // null = unknown (assume OAuth); false = server said OAuth isn't set up yet
+  // → show the manual-username fallback until GITHUB_CLIENT_ID/SECRET exist.
+  const [oauthConfigured, setOauthConfigured] = useState<boolean | null>(null);
   const [ghInput, setGhInput] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [checkingStar, setCheckingStar] = useState(false);
+  const checkingStarRef = useRef(false);
   const [starNote, setStarNote] = useState<string | null>(null);
   const setupRef = useRef<HTMLDivElement | null>(null);
+  const oauthHandledRef = useRef(false);
 
-  const loadProfile = useCallback(async () => {
+  const loadProfile = useCallback(async (): Promise<DevProfile | null> => {
     // Read straight from localStorage — this also runs on first mount, before
     // the `auth` state has been set, so the ref/state isn't reliable yet.
     const current = readAuth();
-    if (!current) return;
+    if (!current) return null;
     if (!current.token) {
       // Signed up before sessions existed — the server can't confirm the
       // gate state, so fall back to the cache and ask for a re-sign-in.
       const cached = readCachedProfile();
       setProfile(cached);
       setProfileState(cached ? "stale" : "none");
-      return;
+      return cached;
     }
     setProfileState("loading");
     const result = await fetchProfile(current.token);
+    setOauthConfigured(result.oauthConfigured);
     if (result.status === "ok" && result.profile) {
       setProfile(result.profile);
       setProfileState("live");
-      return;
+      return result.profile;
     }
     if (result.status === "unauthorized") {
       const cached = readCachedProfile();
       setProfile(cached);
       setProfileState(cached && cached.publishAccess ? "stale" : "unauthorized");
-      return;
+      return cached;
     }
     const cached = readCachedProfile();
     setProfile(cached);
     setProfileState(cached ? "stale" : "none");
+    return cached;
   }, []);
 
   useEffect(() => {
@@ -140,6 +149,27 @@ export function DeveloperDashboard() {
       // ignore
     }
     router.replace("/");
+  };
+
+  const connectGithubOauth = async () => {
+    if (connecting || !auth?.token) return;
+    setConnecting(true);
+    setConnectError(null);
+    const result = await startGithubOauth(auth.token);
+    if (result.ok && result.authorizeUrl) {
+      // Full-page redirect to GitHub's authorize prompt; GitHub sends the
+      // developer back to /api/github/callback, which links the verified
+      // identity and returns to /dashboard?github=connected.
+      window.location.assign(result.authorizeUrl);
+      return;
+    }
+    setConnecting(false);
+    if (result.notConfigured) {
+      setOauthConfigured(false);
+      setConnectError("GitHub OAuth isn't wired up yet — enter your username below for now.");
+      return;
+    }
+    setConnectError(result.error || "We couldn't start the GitHub connection — please try again.");
   };
 
   const connectGithub = async () => {
@@ -165,11 +195,14 @@ export function DeveloperDashboard() {
     }
   };
 
-  const checkStar = async () => {
-    if (checkingStar || !auth?.token) return;
+  const checkStar = useCallback(async (): Promise<ProfileActionResult | null> => {
+    const current = readAuth();
+    if (!current?.token || checkingStarRef.current) return null;
+    checkingStarRef.current = true;
     setCheckingStar(true);
     setStarNote(null);
-    const result = await postProfileAction(auth.token, { action: "check-star" });
+    const result = await postProfileAction(current.token, { action: "check-star" });
+    checkingStarRef.current = false;
     setCheckingStar(false);
     if (result.ok) {
       if (result.profile) {
@@ -180,7 +213,42 @@ export function DeveloperDashboard() {
     } else {
       setStarNote(result.error || "We couldn't check just now — please try again.");
     }
-  };
+    return result;
+  }, []);
+
+  // Return leg of the GitHub OAuth round-trip: /api/github/callback bounces
+  // back here with ?github=<flag>. Sync the profile, surface any error and —
+  // per the publishing rule — auto-run the star check once, since most
+  // developers star the repo while (or before) authorizing.
+  useEffect(() => {
+    if (!ready || !auth?.token || oauthHandledRef.current) return;
+    const flag = new URLSearchParams(window.location.search).get("github");
+    if (!flag) return;
+    oauthHandledRef.current = true;
+    window.history.replaceState({}, "", window.location.pathname);
+    if (flag === "connected") {
+      void (async () => {
+        const fresh = await loadProfile();
+        if (fresh?.githubConnected && !fresh.starred) {
+          await checkStar();
+        }
+      })();
+      return;
+    }
+    const messages: Record<string, string> = {
+      denied: "You cancelled the GitHub authorization — nothing was changed. You can try again any time.",
+      expired: "That GitHub link expired before it finished — press Connect with GitHub to try again.",
+      invalid: "That GitHub link wasn't valid any more — press Connect with GitHub to try again.",
+      taken: "That GitHub profile is already linked to another Orthotopy account.",
+      unconfigured: "GitHub OAuth isn't configured yet — enter your username manually for now.",
+      exchange: "We couldn't complete the GitHub handshake — please try again in a moment.",
+      profile: "We reached GitHub but couldn't read your profile — please try again.",
+      error: "Something went wrong linking your GitHub profile — please try again.",
+    };
+    setConnectError(
+      messages[flag] || "Something went wrong connecting GitHub — please try again."
+    );
+  }, [ready, auth, loadProfile, checkStar]);
 
   const scrollToSetup = () =>
     setupRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -341,24 +409,48 @@ export function DeveloperDashboard() {
                     ) : null}
                   </div>
                   {profile?.githubConnected ? (
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Connected as{" "}
-                      <a
-                        href={`https://github.com/${profile.githubUsername}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-0.5 font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                      >
-                        @{profile.githubUsername}
-                        <ExternalLink className="size-3" aria-hidden="true" />
-                      </a>
-                    </p>
-                  ) : (
+                    <div className="mt-3 flex items-start gap-3">
+                      {profile.githubAvatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={profile.githubAvatarUrl}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          className="size-10 shrink-0 rounded-full border bg-muted"
+                        />
+                      ) : null}
+                      <div className="min-w-0 text-sm">
+                        <p className="flex flex-wrap items-center gap-x-2">
+                          <span className="font-medium text-foreground">
+                            {profile.githubName || `@${profile.githubUsername}`}
+                          </span>
+                          <a
+                            href={`https://github.com/${profile.githubUsername}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-0.5 text-muted-foreground underline underline-offset-4 hover:no-underline"
+                          >
+                            @{profile.githubUsername}
+                            <ExternalLink className="size-3" aria-hidden="true" />
+                          </a>
+                        </p>
+                        {profile.githubEmail ? (
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {profile.githubEmail}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                          <BadgeCheck className="size-3.5" aria-hidden="true" />
+                          Identity verified via GitHub
+                        </p>
+                      </div>
+                    </div>
+                  ) : oauthConfigured === false ? (
                     <>
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                        We check the username with GitHub, so it has to be a
-                        real account — it&#39;s how you&#39;ll submit and track
-                        your works.
+                        GitHub OAuth isn&#39;t wired up yet, so for now we check
+                        the username with GitHub directly — it has to be a real
+                        account.
                       </p>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Input
@@ -387,6 +479,33 @@ export function DeveloperDashboard() {
                             <Github className="size-4" aria-hidden="true" />
                           )}
                           {connecting ? "Connecting…" : "Connect"}
+                        </Button>
+                      </div>
+                      {connectError ? (
+                        <p className="mt-2 text-xs text-destructive" role="alert">
+                          {connectError}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        Connect with GitHub once — we read your name, email and
+                        avatar to verify your developer identity. Nothing is
+                        posted and your repositories stay untouched.
+                      </p>
+                      <div className="mt-3">
+                        <Button
+                          type="button"
+                          onClick={connectGithubOauth}
+                          disabled={connecting || profileState === "unauthorized"}
+                        >
+                          {connecting ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Github className="size-4" aria-hidden="true" />
+                          )}
+                          {connecting ? "Opening GitHub…" : "Connect with GitHub"}
                         </Button>
                       </div>
                       {connectError ? (
@@ -435,7 +554,7 @@ export function DeveloperDashboard() {
                         </Button>
                         <Button
                           type="button"
-                          onClick={checkStar}
+                          onClick={() => void checkStar()}
                           disabled={
                             checkingStar ||
                             !profile?.githubConnected ||

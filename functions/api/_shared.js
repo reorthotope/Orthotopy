@@ -20,6 +20,30 @@ export function githubRepo(env) {
   return /^[^\s/]+\/[^\s/]+$/.test(repo) ? repo : "reorthotope/Orthotopy";
 }
 
+// --- GitHub OAuth (the trusted way to connect a developer's identity) ---
+
+/**
+ * OAuth is active as soon as both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
+ * are configured. Until then /api/profile keeps the manual-username fallback
+ * so the site keeps working before the credentials are added.
+ */
+export function githubOauthConfig(env) {
+  const clientId = String(env?.GITHUB_CLIENT_ID ?? "").trim();
+  const clientSecret = String(env?.GITHUB_CLIENT_SECRET ?? "").trim();
+  return { clientId, clientSecret, configured: Boolean(clientId && clientSecret) };
+}
+
+/**
+ * Where the /login/oauth/authorize + /login/oauth/access_token endpoints live.
+ * Defaults to github.com; override with GITHUB_WEB_BASE for local mock tests.
+ */
+export function githubWebBase(env) {
+  const base = String(env?.GITHUB_WEB_BASE ?? "").trim().replace(/\/+$/, "");
+  return base || "https://github.com";
+}
+
+export const GITHUB_OAUTH_SCOPES = "read:user user:email";
+
 /**
  * Username policy (mirror of src/lib/verification.ts — keep both in sync):
  *  - always lowercase (the frontend lowercases as the user types)
@@ -234,7 +258,8 @@ export async function getSessionUser(env, request) {
   try {
     return await env.DB.prepare(
       `SELECT u.nickname, u.username, u.email, u.github_username,
-              u.github_connected_at, u.starred_at, u.publish_access, u.created_at
+              u.github_connected_at, u.github_name, u.github_email,
+              u.github_avatar_url, u.starred_at, u.publish_access, u.created_at
        FROM sessions s JOIN users u ON u.username = s.username
        WHERE s.token = ?1 AND s.expires_at > ?2
        LIMIT 1`
@@ -264,6 +289,9 @@ export async function ensureProfileSchema(env) {
       email_verified INTEGER NOT NULL DEFAULT 0,
       github_username TEXT,
       github_connected_at TEXT,
+      github_name TEXT,
+      github_email TEXT,
+      github_avatar_url TEXT,
       starred_at TEXT,
       publish_access INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -281,6 +309,9 @@ export async function ensureProfileSchema(env) {
   for (const sql of [
     "ALTER TABLE users ADD COLUMN github_username TEXT",
     "ALTER TABLE users ADD COLUMN github_connected_at TEXT",
+    "ALTER TABLE users ADD COLUMN github_name TEXT",
+    "ALTER TABLE users ADD COLUMN github_email TEXT",
+    "ALTER TABLE users ADD COLUMN github_avatar_url TEXT",
     "ALTER TABLE users ADD COLUMN starred_at TEXT",
     "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0",
   ]) {

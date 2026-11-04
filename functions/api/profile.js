@@ -1,12 +1,17 @@
 /**
  * GET  /api/profile
  *   Returns the signed-in developer's profile and the publishing-gate state
- *   (GitHub connected, repo starred, publish access). Requires a bearer
- *   session token from /api/login or /api/verify.
+ *   (GitHub connected, repo starred, publish access) plus whether GitHub OAuth
+ *   is configured. Requires a bearer session token from /api/login or
+ *   /api/verify.
  *
  * POST /api/profile
- *   Body: { action: "connect-github", username }  — links the GitHub profile
- *     after checking with api.github.com that the account really exists.
+ *   Body: { action: "github-oauth-start", origin? } — mints a one-time state
+ *     bound to this account and returns the github.com authorize URL. The
+ *     callback (/api/github/callback) links the verified GitHub identity.
+ *   Body: { action: "connect-github", username }  — legacy manual fallback,
+ *     only accepted while OAuth credentials are NOT configured; links the
+ *     profile after checking with api.github.com that the account exists.
  *   Body: { action: "check-star" }                — scans the repository's
  *     public stargazers for the connected username; when found, flips
  *     publish_access to 1 so the account can publish works.
@@ -15,14 +20,28 @@
  * have BOTH a connected GitHub profile AND a star on the Orthotopy repo.
  *
  * Bindings & variables:
- *   DB           D1 database (required)
- *   CODES        KV namespace (optional — used to cache GitHub lookups and
- *                throttle star checks)
- *   GITHUB_REPO  optional "owner/name" override (defaults to
- *                reorthotope/Orthotopy; useful for local testing)
+ *   DB                  D1 database (required)
+ *   CODES               KV namespace (required for OAuth state + caching;
+ *                       optional otherwise)
+ *   GITHUB_CLIENT_ID    OAuth App client id  ─┐ both set ⇒ OAuth connect is
+ *   GITHUB_CLIENT_SECRET OAuth App client secret┘ enforced; unset ⇒ manual
+ *                                              username fallback
+ *   GITHUB_REPO          optional "owner/name" override (defaults to
+ *                        reorthotope/Orthotopy; useful for local testing)
+ *   GH_API_BASE / GITHUB_WEB_BASE  optional api.github.com / github.com
+ *                        overrides for local mock tests — never set in prod
  */
 
-import { ensureProfileSchema, getSessionUser, githubRepo, json } from "./_shared.js";
+import {
+  ensureProfileSchema,
+  GITHUB_OAUTH_SCOPES,
+  getSessionUser,
+  githubOauthConfig,
+  githubRepo,
+  githubWebBase,
+  generateToken,
+  json,
+} from "./_shared.js";
 
 /**
  * Override with the GH_API_BASE variable to point the lookups somewhere else
@@ -53,6 +72,9 @@ function profilePayload(row) {
     createdAt: row.created_at || null,
     githubConnected: Boolean(githubUsername),
     githubUsername,
+    githubName: row.github_name ? String(row.github_name) : null,
+    githubEmail: row.github_email ? String(row.github_email) : null,
+    githubAvatarUrl: row.github_avatar_url ? String(row.github_avatar_url) : null,
     starred,
     publishAccess: row.publish_access === 1 || (Boolean(githubUsername) && starred),
   };
@@ -84,7 +106,14 @@ export async function onRequestGet({ request, env }) {
   if (!user) {
     return json({ error: "Your session has expired — sign in again to continue." }, 401);
   }
-  return json({ ok: true, profile: profilePayload(user) });
+  const oauth = githubOauthConfig(env);
+  return json({
+    ok: true,
+    profile: profilePayload(user),
+    // Tells the dashboard whether to render the "Connect with GitHub" OAuth
+    // button (true) or the manual-username fallback (false).
+    githubOauth: { configured: oauth.configured },
+  });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -113,7 +142,19 @@ export async function onRequestPost({ request, env }) {
   const action = String(body?.action ?? "");
 
   // ------------------------------------------------------- connect github
+  // Legacy manual path: kept ONLY while OAuth credentials are not configured
+  // (so the site keeps working before GITHUB_CLIENT_ID/SECRET are added).
+  // Once OAuth is on, identity must come from the GitHub authorization flow.
   if (action === "connect-github") {
+    if (githubOauthConfig(env).configured) {
+      return json(
+        {
+          error: "Connecting is done with the “Connect with GitHub” button now — it verifies your identity.",
+          oauthRequired: true,
+        },
+        400
+      );
+    }
     const raw = String(body?.username ?? "").trim();
     if (!GH_USERNAME_RE.test(raw)) {
       return json(
@@ -181,11 +222,69 @@ export async function onRequestPost({ request, env }) {
 
     const fresh = await env.DB
       .prepare(
-        "SELECT nickname, username, email, github_username, github_connected_at, starred_at, publish_access, created_at FROM users WHERE username = ?1"
+        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, github_avatar_url, starred_at, publish_access, created_at FROM users WHERE username = ?1"
       )
       .bind(user.username)
       .first();
     return json({ ok: true, profile: profilePayload(fresh ?? user) });
+  }
+
+  // ---------------------------------------------- start GitHub OAuth flow
+  // Mints a one-time state bound to this account, stores it in KV and hands
+  // back the github.com authorize URL. The browser is redirected there; GitHub
+  // comes back to /api/github/callback, which exchanges the code and links
+  // the verified profile to the account stored in the state.
+  if (action === "github-oauth-start") {
+    const oauth = githubOauthConfig(env);
+    if (!oauth.configured) {
+      return json(
+        { error: "GitHub OAuth isn't configured yet.", oauthConfigured: false },
+        400
+      );
+    }
+    if (!env.CODES || typeof env.CODES.put !== "function") {
+      console.error("profile: oauth start without CODES KV binding");
+      return json(
+        { error: "Server setup incomplete — the KV namespace (CODES) is not connected yet." },
+        500
+      );
+    }
+
+    // The OAuth round-trip must return to the SAME origin the developer is
+    // signed in on (localStorage sessions are per-origin), so the callback
+    // redirect_uri is derived from this request's own origin.
+    let origin = String(body?.origin ?? "").trim();
+    if (origin) {
+      try {
+        origin = new URL(origin).origin;
+      } catch {
+        origin = "";
+      }
+    }
+    if (!origin) {
+      try {
+        origin = new URL(request.url).origin;
+      } catch {
+        return json({ error: "We couldn't work out where to send you back to." }, 400);
+      }
+    }
+    const redirectUri = `${origin}/api/github/callback`;
+
+    const state = generateToken();
+    await env.CODES.put(
+      `gh:oauth:state:${state}`,
+      JSON.stringify({ username: user.username, origin, redirectUri }),
+      { expirationTtl: 600 } // 10 minutes to finish the flow
+    );
+
+    const authorizeUrl =
+      `${githubWebBase(env)}/login/oauth/authorize?response_type=code` +
+      `&client_id=${encodeURIComponent(oauth.clientId)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&scope=${encodeURIComponent(GITHUB_OAUTH_SCOPES)}` +
+      `&state=${encodeURIComponent(state)}` +
+      `&allow_signup=true`;
+    return json({ ok: true, authorizeUrl });
   }
 
   // ----------------------------------------------------------- check star
@@ -296,7 +395,7 @@ export async function onRequestPost({ request, env }) {
 
     const fresh = await env.DB
       .prepare(
-        "SELECT nickname, username, email, github_username, github_connected_at, starred_at, publish_access, created_at FROM users WHERE username = ?1"
+        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, github_avatar_url, starred_at, publish_access, created_at FROM users WHERE username = ?1"
       )
       .bind(user.username)
       .first();
