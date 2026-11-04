@@ -80,7 +80,10 @@ function profilePayload(row) {
     githubName: row.github_name ? String(row.github_name) : null,
     githubEmail: row.github_email ? String(row.github_email) : null,
     starred,
-    publishAccess: row.publish_access === 1 || (Boolean(githubUsername) && starred),
+    // Publishing (and the dashboard) unlock with a connected GitHub profile —
+    // the OAuth-verified identity IS the access. Older rows keep their
+    // publish_access flag so previously unlocked accounts stay unlocked.
+    publishAccess: row.publish_access === 1 || Boolean(githubUsername),
   };
 }
 

@@ -169,7 +169,7 @@ export async function onRequestGet({ request, env }) {
     await env.DB
       .prepare(
         `UPDATE users SET github_username = ?1, github_connected_at = ?2,
-         github_name = ?3, github_email = ?4
+         github_name = ?3, github_email = ?4, publish_access = 1
          WHERE username = ?5`
       )
       .bind(

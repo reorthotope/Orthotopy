@@ -1,7 +1,7 @@
 /**
  * POST /api/verify
  *
- * Body: { email, code, nickname, username, password, turnstileToken }
+ * Body: { email, code, username, password, turnstileToken } — no names collected
  * (phone is optional — the form does not collect it for now)
  *
  * Checks the emailed code, then creates the dev-team account row in D1 with a
@@ -30,16 +30,14 @@ import {
 } from "./_shared.js";
 
 function checkProfile(body) {
-  const nickname = String(body?.nickname ?? "").trim();
+  // Names are not collected any more — identity is the username; GitHub
+  // OAuth supplies the verified profile once connected.
   const username = String(body?.username ?? "").trim().toLowerCase();
   const email = String(body?.email ?? "").trim().toLowerCase();
   const phone = String(body?.phone ?? "").trim();
   const password = String(body?.password ?? "");
 
   const errors = {};
-  if (nickname.length < 2 || nickname.length > 60) {
-    errors.nickname = "Tell us what to call you (at least 2 characters).";
-  }
   const usernameReason = usernameError(username);
   if (usernameReason) {
     errors.username = usernameReason;
@@ -54,7 +52,7 @@ function checkProfile(body) {
   if (password.length < 8 || password.length > 200) {
     errors.password = "Use at least 8 characters.";
   }
-  return { errors, values: { nickname, username, email, phone, password } };
+  return { errors, values: { username, email, phone, password } };
 }
 
 export async function onRequestPost({ request, env }) {
@@ -146,9 +144,11 @@ export async function onRequestPost({ request, env }) {
   const passwordHash = await hashPassword(values.password);
   try {
     await env.DB.prepare(
-      "INSERT INTO users (nickname, username, email, phone, password_hash, email_verified) VALUES (?1, ?2, ?3, ?4, ?5, 1)"
+      // Names are no longer collected — an empty string keeps older databases
+      // (where the column is NOT NULL) happy; new databases allow NULL too.
+      "INSERT INTO users (nickname, username, email, phone, password_hash, email_verified) VALUES ('', ?1, ?2, ?3, ?4, 1)"
     )
-      .bind(values.nickname, values.username, values.email, values.phone || null, passwordHash)
+      .bind(values.username, values.email, values.phone || null, passwordHash)
       .run();
   } catch (err) {
     const msg = String((err && err.message) || "");

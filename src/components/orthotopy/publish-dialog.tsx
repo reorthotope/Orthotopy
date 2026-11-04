@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { CATEGORIES, CATEGORY_ICONS, KINDS, gradientFor } from "@/lib/works";
 import { CheckCircle2, Circle, Github, Loader2 } from "lucide-react";
-import { fetchProfile, readCachedProfile, REPO_URL, type DevProfile } from "./dev-profile";
+import { fetchProfile, readCachedProfile, type DevProfile } from "./dev-profile";
 
 const CATALOG_URL =
   "https://github.com/reorthotope/Orthotopy/blob/main/public/catalog/works.json";
@@ -191,8 +191,8 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
               <DialogTitle>Create your developer account first</DialogTitle>
               <DialogDescription>
                 Publishing on Orthotopy starts with a free account: verify your
-                email, connect your GitHub profile, star the repository — then
-                publish as many works as you like.
+                email and connect your GitHub profile — then publish as many
+                works as you like.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="flex-col gap-2 sm:flex-col">
@@ -214,9 +214,9 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             <DialogHeader>
               <DialogTitle>One quick step before your first publish</DialogTitle>
               <DialogDescription>
-                Before your first work, connect your GitHub profile and star the
-                Orthotopy repository — it keeps the catalog real and helps the
-                project grow. You only do this once.
+                Before your first work, connect your GitHub profile — it
+                verifies your developer identity and keeps the catalog real.
+                You only do this once.
               </DialogDescription>
             </DialogHeader>
             <ul className="space-y-2.5 rounded-xl border bg-card p-4">
@@ -224,11 +224,6 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
                 Boolean(profile?.githubConnected),
                 "Connect your GitHub profile",
                 "do this from your dashboard"
-              )}
-              {gateRow(
-                Boolean(profile?.starred),
-                `Star ${REPO_URL.replace("https://github.com/", "")}`,
-                "press Star on the repo, then verify"
               )}
             </ul>
             {needsSignin ? (

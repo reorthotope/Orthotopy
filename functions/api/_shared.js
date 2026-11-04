@@ -293,7 +293,7 @@ export async function ensureProfileSchema(env) {
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nickname TEXT NOT NULL,
+      nickname TEXT,
       username TEXT NOT NULL UNIQUE,
       email TEXT NOT NULL UNIQUE,
       phone TEXT,
@@ -314,6 +314,36 @@ export async function ensureProfileSchema(env) {
       username TEXT NOT NULL,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
+    )`
+  ).run();
+  // Published works owned by accounts. Rows are inserted by the publishing
+  // pipeline once a submitted work is approved; the dashboard reads them
+  // through /api/my-works.
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS works (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      title TEXT NOT NULL,
+      tagline TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'Developer',
+      category TEXT NOT NULL DEFAULT 'Other',
+      icon TEXT NOT NULL DEFAULT 'sparkles',
+      gradient TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_works_username ON works(username)"
+  ).run();
+  // Daily view/download counters per work (UTC days). Incremented by
+  // POST /api/track; aggregated by /api/my-works for the dashboard graphs.
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS work_stats_daily (
+      work_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      views INTEGER NOT NULL DEFAULT 0,
+      downloads INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (work_id, day)
     )`
   ).run();
   // Older databases were created before the GitHub-profile columns existed.

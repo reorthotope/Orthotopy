@@ -12,7 +12,6 @@ import {
   MailCheck,
   RotateCw,
   ShieldCheck,
-  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,10 +29,10 @@ import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verificatio
  * Developer portal forms.
  *
  * Mode "signup" —
- *   Step 1 — details: nickname, username (always lowercase, strict format),
- *   email, password + confirm. Continue (or Enter) validates every field and
- *   only then sends the verification code — nothing is sent before the user
- *   explicitly submits.
+ *   Step 1 — details: username (always lowercase, strict format),
+ *   email, password + confirm. No names are collected. Continue (or Enter)
+ *   validates every field and only then sends the verification code —
+ *   nothing is sent before the user explicitly submits.
  *   Step 2 — verify: the 6-character LLDDDD code is checked automatically as
  *   soon as the sixth character is typed; a resend button (45s cooldown) and an
  *   "edit details" escape hatch are available.
@@ -51,7 +50,6 @@ import { CODE_PATTERN, normalizeCode, validateUsername } from "@/lib/verificatio
  */
 
 interface FormValues {
-  nickname: string;
   username: string;
   email: string;
   password: string;
@@ -59,7 +57,6 @@ interface FormValues {
 }
 
 const EMPTY: FormValues = {
-  nickname: "",
   username: "",
   email: "",
   password: "",
@@ -76,9 +73,6 @@ type Mode = "signup" | "signin";
 
 function computeErrors(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (values.nickname.trim().length < 2) {
-    errors.nickname = "Tell us what to call you (at least 2 characters).";
-  }
   const usernameReason = validateUsername(values.username);
   if (usernameReason) errors.username = usernameReason;
   if (!EMAIL_RE.test(values.email.trim())) {
@@ -250,7 +244,6 @@ export function JoinDevForm() {
         body: JSON.stringify({
           email: sentEmailRef.current,
           code: codeValue,
-          nickname: v.nickname.trim(),
           username: v.username.trim().toLowerCase(),
           password: v.password,
         }),
@@ -261,7 +254,6 @@ export function JoinDevForm() {
           localStorage.setItem(
             AUTH_KEY,
             JSON.stringify({
-              nickname: v.nickname.trim(),
               username: v.username.trim().toLowerCase(),
               email: sentEmailRef.current,
               createdAt: new Date().toISOString(),
@@ -337,7 +329,7 @@ export function JoinDevForm() {
 
   const handleDetailsSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    setTouched({ nickname: true, username: true, email: true, password: true, confirm: true });
+    setTouched({ username: true, email: true, password: true, confirm: true });
     if (!allValid) return;
     if (TURNSTILE_ENABLED && !turnstileToken) {
       setSendError(
@@ -396,7 +388,6 @@ export function JoinDevForm() {
           localStorage.setItem(
             AUTH_KEY,
             JSON.stringify({
-              nickname: data.user.nickname || data.user.username || "Developer",
               username: data.user.username || "",
               email: data.user.email || "",
               createdAt: data.user.createdAt || new Date().toISOString(),
@@ -440,7 +431,7 @@ export function JoinDevForm() {
           Account created!
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-          Welcome to Orthotopy, {values.nickname.trim()}.{" "}
+          Welcome to Orthotopy, <strong className="text-foreground">@{values.username.trim()}</strong>.{" "}
           <strong className="text-foreground">{values.email.trim()}</strong> is
           verified and your developer dashboard is ready.
         </p>
@@ -725,48 +716,26 @@ export function JoinDevForm() {
 
       <form onSubmit={handleDetailsSubmit} noValidate className="mt-8 space-y-6 rounded-2xl border bg-card p-6 sm:p-8">
         <fieldset className="space-y-5" disabled={sending}>
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="nickname">Nickname</Label>
-              <div className="relative">
-                <UserRound
-                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="nickname"
-                  value={values.nickname}
-                  onChange={(event) => update("nickname")(event.target.value)}
-                  onBlur={markTouched("nickname")}
-                  placeholder="Kite"
-                  autoComplete="nickname"
-                  className="pl-9"
-                  aria-invalid={Boolean(serverErrors.nickname || (touched.nickname && errors.nickname))}
-                />
-              </div>
-              {fieldError("nickname")}
+          <div className="space-y-2">
+            <Label htmlFor="username">Username</Label>
+            <div className="relative">
+              <AtSign
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                id="username"
+                value={values.username}
+                onChange={(event) => update("username")(event.target.value.toLowerCase())}
+                onBlur={markTouched("username")}
+                placeholder="kite.dev"
+                autoComplete="username"
+                spellCheck={false}
+                className="pl-9"
+                aria-invalid={Boolean(serverErrors.username || (touched.username && errors.username))}
+              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
-              <div className="relative">
-                <AtSign
-                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="username"
-                  value={values.username}
-                  onChange={(event) => update("username")(event.target.value.toLowerCase())}
-                  onBlur={markTouched("username")}
-                  placeholder="kite.dev"
-                  autoComplete="username"
-                  spellCheck={false}
-                  className="pl-9"
-                  aria-invalid={Boolean(serverErrors.username || (touched.username && errors.username))}
-                />
-              </div>
-              {fieldError("username")}
-            </div>
+            {fieldError("username")}
           </div>
 
           <div className="space-y-2">
