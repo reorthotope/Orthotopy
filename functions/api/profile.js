@@ -217,13 +217,30 @@ export async function onRequestPost({ request, env }) {
     try {
       // Scan up to 5 pages (500 most recent stargazers). The list is newest
       // first, so a fresh star is on page 1; older stars need the extra pages.
+      // Cached pages go stale after 20s: KV's floor TTL is 60s, but a developer
+      // who just starred should not wait a minute, so the value carries its own
+      // timestamp and older entries are simply refetched (the 10s per-account
+      // throttle still caps worst-case GitHub usage).
+      const STALE_MS = 20_000;
       for (let page = 1; page <= 5 && !found; page++) {
         const cacheKey = `gh:stars:${repo}:${page}`;
         let logins = null;
         const cached = await kvGet(env, cacheKey);
         if (cached) {
-          logins = JSON.parse(cached);
-        } else {
+          try {
+            const parsed = JSON.parse(cached);
+            if (
+              parsed &&
+              Array.isArray(parsed.logins) &&
+              Date.now() - Number(parsed.t || 0) < STALE_MS
+            ) {
+              logins = parsed.logins;
+            }
+          } catch {
+            // malformed cache entry — ignore it and refetch
+          }
+        }
+        if (!logins) {
           let res;
           try {
             res = await fetch(
@@ -247,7 +264,7 @@ export async function onRequestPost({ request, env }) {
           logins = Array.isArray(list)
             ? list.map((x) => String(x?.login ?? "").toLowerCase()).filter(Boolean)
             : [];
-          await kvPut(env, cacheKey, JSON.stringify(logins), 60);
+          await kvPut(env, cacheKey, JSON.stringify({ t: Date.now(), logins }), 60);
         }
         if (logins.includes(target)) found = true;
         if (logins.length < 100) break; // last page — no point scanning further
