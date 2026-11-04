@@ -12,9 +12,13 @@
  *   Body: { action: "connect-github", username }  — legacy manual fallback,
  *     only accepted while OAuth credentials are NOT configured; links the
  *     profile after checking with api.github.com that the account exists.
- *   Body: { action: "check-star" }                — scans the repository's
- *     public stargazers for the connected username; when found, flips
- *     publish_access to 1 so the account can publish works.
+ *   Body: { action: "check-star" }                — asks GitHub, with the
+ *     OAuth token stored at connect time, whether THIS account starred the
+ *     repository (204/404 — exact, no IP rate-limit issues); when starred,
+ *     flips publish_access to 1 so the account can publish works. Accounts
+ *     without a stored token fall back to scanning the public stargazers.
+ *   Body: { action: "disconnect-github" }         — unlinks the GitHub
+ *     identity, deletes the stored OAuth token and revokes publish access.
  *
  * Publishing rule: before the FIRST work can be published, the account must
  * have BOTH a connected GitHub profile AND a star on the Orthotopy repo.
@@ -38,6 +42,7 @@ import {
   getSessionUser,
   githubOauthConfig,
   githubRepo,
+  githubTokenKey,
   githubWebBase,
   generateToken,
   json,
@@ -310,15 +315,58 @@ export async function onRequestPost({ request, env }) {
 
     const repo = githubRepo(env);
     const target = String(user.github_username).toLowerCase();
+    const tokenKey = githubTokenKey(user.username);
     let found = false;
+    let tokenChecked = false;
 
+    // Primary path: ask GitHub directly whether THIS account starred the
+    // repo, using the OAuth token stored at connect time (204 = starred,
+    // 404 = not starred). Exact, and immune to the IP challenges/rate
+    // limits that make anonymous stargazer requests unreliable from
+    // datacenter egress — the reason the button used to fail on prod.
+    let token = null;
     try {
-      // Scan up to 5 pages (500 most recent stargazers). The list is newest
-      // first, so a fresh star is on page 1; older stars need the extra pages.
-      // Cached pages go stale after 20s: KV's floor TTL is 60s, but a developer
-      // who just starred should not wait a minute, so the value carries its own
-      // timestamp and older entries are simply refetched (the 10s per-account
-      // throttle still caps worst-case GitHub usage).
+      token = await kvGet(env, tokenKey);
+    } catch {
+      token = null;
+    }
+    if (token) {
+      let res;
+      try {
+        res = await fetch(`${ghApiBase(env)}/user/starred/${repo}`, {
+          headers: { ...GH_HEADERS, authorization: `Bearer ${token}` },
+        });
+      } catch {
+        return json({ error: "We couldn't reach GitHub — please try again in a moment." }, 502);
+      }
+      if (res.status === 204) {
+        found = true;
+        tokenChecked = true;
+      } else if (res.status === 404) {
+        // Authoritative answer: this GitHub account has NOT starred.
+        tokenChecked = true;
+      } else if (res.status === 401) {
+        // Token revoked or expired — drop it; reconnecting refreshes it.
+        try {
+          if (env.CODES && typeof env.CODES.delete === "function") {
+            await env.CODES.delete(tokenKey);
+          }
+        } catch {
+          // best effort
+        }
+      } else {
+        console.error(`profile: token star check failed: ${res.status}`);
+        return json({ error: "GitHub lookup failed — please try again in a moment." }, 502);
+      }
+    }
+
+    // Fallback for accounts without a usable token (connected before tokens
+    // were kept, or the token was revoked): scan the public stargazer list,
+    // newest first, up to 5 pages (500 most recent stargazers). Cached pages
+    // go stale after 20s: KV's floor TTL is 60s, but a developer who just
+    // starred should not wait a minute, so the value carries its own
+    // timestamp and older entries are simply refetched.
+    if (!tokenChecked) {
       const STALE_MS = 20_000;
       for (let page = 1; page <= 5 && !found; page++) {
         const cacheKey = `gh:stars:${repo}:${page}`;
@@ -346,17 +394,22 @@ export async function onRequestPost({ request, env }) {
               { headers: GH_HEADERS }
             );
           } catch {
-            return json({ error: "We couldn't reach GitHub — please try again in a moment." }, 502);
+            return json({
+              error: "We couldn't reach GitHub — please try again in a moment.",
+              reconnect: true,
+            }, 502);
           }
           if (res.status === 404) {
             return json({ error: `The repository ${repo} couldn't be found on GitHub.` }, 500);
           }
           if (!res.ok) {
             console.error(`profile: stargazers fetch failed: ${res.status}`);
-            return json(
-              { error: "GitHub lookup failed — please try again in a moment." },
-              502
-            );
+            // 401/403 here is GitHub challenging anonymous requests from
+            // datacenter IPs — reconnecting stores a token that fixes it.
+            return json({
+              error: "GitHub won't answer anonymous lookups right now — reconnect your GitHub account once, then check again.",
+              reconnect: true,
+            }, 502);
           }
           const list = await res.json().catch(() => null);
           logins = Array.isArray(list)
@@ -367,16 +420,15 @@ export async function onRequestPost({ request, env }) {
         if (logins.includes(target)) found = true;
         if (logins.length < 100) break; // last page — no point scanning further
       }
-    } catch (err) {
-      console.error(`profile: star scan failed: ${err && err.message}`);
-      return json({ error: "GitHub lookup failed — please try again in a moment." }, 502);
     }
 
     if (!found) {
       return json({
         ok: true,
         starred: false,
-        message: `We can't see your star on ${repo} yet — make sure you're signed in to GitHub, star the repository, then check again in a few seconds.`,
+        message: tokenChecked
+          ? `We checked your GitHub account — no star on ${repo} yet. Star the repository, then press the button again in a few seconds.`
+          : `We can't see your star on ${repo} yet — star the repository, then check again in a few seconds.`,
       });
     }
 
@@ -399,6 +451,51 @@ export async function onRequestPost({ request, env }) {
       .bind(user.username)
       .first();
     return json({ ok: true, starred: true, profile: profilePayload(fresh ?? user) });
+  }
+
+  // ------------------------------------------------- disconnect github
+  // Unlinks the GitHub identity, deletes the stored OAuth token and revokes
+  // the publishing gate — publish access stays locked until the developer
+  // reconnects GitHub and re-stars the repository.
+  if (action === "disconnect-github") {
+    try {
+      await ensureProfileSchema(env);
+      await env.DB
+        .prepare(
+          `UPDATE users SET github_username = NULL, github_connected_at = NULL,
+           github_name = NULL, github_email = NULL, starred_at = NULL,
+           publish_access = 0
+           WHERE username = ?1`
+        )
+        .bind(user.username)
+        .run();
+    } catch (err) {
+      console.error(`profile: disconnect github failed: ${err && err.message}`);
+      return json({ error: "We couldn't save that — please try again in a moment." }, 500);
+    }
+    try {
+      if (env.CODES && typeof env.CODES.delete === "function") {
+        await env.CODES.delete(githubTokenKey(user.username));
+      }
+    } catch {
+      // best effort — the token expires on its own anyway
+    }
+    let fresh = null;
+    try {
+      fresh = await env.DB
+        .prepare(
+          "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, starred_at, publish_access, created_at FROM users WHERE username = ?1"
+        )
+        .bind(user.username)
+        .first();
+    } catch {
+      fresh = null;
+    }
+    return json({
+      ok: true,
+      profile: profilePayload(fresh ?? { ...user, github_username: null, starred_at: null, publish_access: 0 }),
+      message: "GitHub disconnected — publishing access has been taken back.",
+    });
   }
 
   return json({ error: "Unknown action." }, 400);

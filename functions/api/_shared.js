@@ -45,6 +45,18 @@ export function githubWebBase(env) {
 export const GITHUB_OAUTH_SCOPES = "read:user user:email";
 
 /**
+ * KV key holding the developer's GitHub OAuth access token (scope
+ * read:user user:email only). Stored by /api/github/callback so the star
+ * check can ask GitHub directly whether THIS account starred the repo —
+ * exact, and immune to the IP challenges/rate limits that hit anonymous
+ * stargazer requests from datacenter egress (Cloudflare Workers included).
+ * Deleted when the account disconnects GitHub.
+ */
+export function githubTokenKey(username) {
+  return `gh:oauth:token:${String(username || "").toLowerCase()}`;
+}
+
+/**
  * Username policy (mirror of src/lib/verification.ts — keep both in sync):
  *  - always lowercase (the frontend lowercases as the user types)
  *  - 3–20 characters

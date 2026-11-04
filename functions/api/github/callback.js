@@ -15,10 +15,15 @@
  *      github_name, github_email). One GitHub profile can only ever be
  *      linked to one account. The avatar is NOT stored — the dashboard
  *      derives it from the login via https://github.com/<login>.png.
- *   5. 302 back to <origin>/dashboard?github=connected — the dashboard sees
+ *   5. The access token (scope read:user user:email — read-only, no repo
+ *      access) is kept in KV for 30 days so /api/profile's star check can
+ *      ask GitHub whether THIS account starred the repo; a star found now
+ *      flips publish_access immediately.
+ *   6. 302 back to <origin>/dashboard?github=connected — the dashboard sees
  *      the flag, re-syncs the profile and auto-runs the star check.
  *
- * The OAuth access token itself is never stored: it is used once and dropped.
+ * The token is only used for the star check and identity read; it never
+ * touches the D1 database and is deleted when the account disconnects.
  *
  * Bindings & variables (same project as /api/profile):
  *   DB                   D1 database (required)
@@ -31,6 +36,8 @@
 import {
   ensureProfileSchema,
   githubOauthConfig,
+  githubRepo,
+  githubTokenKey,
   githubWebBase,
 } from "../_shared.js";
 
@@ -162,7 +169,7 @@ export async function onRequestGet({ request, env }) {
     await env.DB
       .prepare(
         `UPDATE users SET github_username = ?1, github_connected_at = ?2,
-         github_name = ?3, github_email = ?4, github_avatar_url = NULL
+         github_name = ?3, github_email = ?4
          WHERE username = ?5`
       )
       .bind(
@@ -176,6 +183,39 @@ export async function onRequestGet({ request, env }) {
   } catch (err) {
     console.error(`github callback: db update failed: ${err && err.message}`);
     return redirectBack(origin, "error");
+  }
+
+  // Keep the access token in KV (30 days, refreshed on every connect) so the
+  // star check can ask GitHub whether THIS account starred the repo. That
+  // request is authenticated, so it never trips the challenges/rate limits
+  // that break anonymous stargazer scans from datacenter egress.
+  if (env.CODES && typeof env.CODES.put === "function") {
+    try {
+      await env.CODES.put(githubTokenKey(username), accessToken, {
+        expirationTtl: 2_592_000, // 30 days
+      });
+    } catch (err) {
+      console.error(`github callback: token store failed: ${err && err.message}`);
+    }
+  }
+
+  // Best-effort star check while the token is at hand — a developer who
+  // starred before connecting unlocks immediately. Any failure here is fine:
+  // the dashboard's auto star check covers the rest.
+  try {
+    const starredRes = await fetch(`${ghApiBase(env)}/user/starred/${githubRepo(env)}`, {
+      headers: { ...GH_HEADERS, authorization: `Bearer ${accessToken}` },
+    });
+    if (starredRes.status === 204) {
+      await env.DB
+        .prepare(
+          "UPDATE users SET starred_at = COALESCE(starred_at, ?1), publish_access = 1 WHERE username = ?2"
+        )
+        .bind(new Date().toISOString(), username)
+        .run();
+    }
+  } catch (err) {
+    console.error(`github callback: star check failed: ${err && err.message}`);
   }
 
   return redirectBack(origin, "connected");

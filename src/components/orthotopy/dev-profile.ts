@@ -112,9 +112,11 @@ export interface ProfileActionResult {
   error?: string;
   message?: string;
   profile?: DevProfile;
+  /** Star check hit GitHub's anonymous-IP wall — reconnecting fixes it. */
+  reconnect?: boolean;
 }
 
-/** POSTs a profile action ("github-oauth-start" | "connect-github" | "check-star"). */
+/** POSTs a profile action ("github-oauth-start" | "check-star" | "disconnect-github" | …). */
 export async function postProfileAction(
   token: string,
   body: Record<string, unknown>
@@ -135,6 +137,7 @@ export async function postProfileAction(
       starred?: boolean;
       authorizeUrl?: string;
       oauthConfigured?: boolean;
+      reconnect?: boolean;
       profile?: Partial<DevProfile>;
     } | null;
     if (res.ok && data?.ok) {
@@ -153,6 +156,7 @@ export async function postProfileAction(
       ok: false,
       error: data?.error || "Something went wrong — please try again.",
       message: data?.oauthConfigured === false ? "oauth-unconfigured" : undefined,
+      reconnect: data?.reconnect === true,
     };
   } catch {
     return {

@@ -94,6 +94,9 @@ export function DeveloperDashboard() {
   const [checkingStar, setCheckingStar] = useState(false);
   const checkingStarRef = useRef(false);
   const [starNote, setStarNote] = useState<string | null>(null);
+  const [starNeedsReconnect, setStarNeedsReconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const setupRef = useRef<HTMLDivElement | null>(null);
   const oauthHandledRef = useRef(false);
 
@@ -206,16 +209,43 @@ export function DeveloperDashboard() {
     checkingStarRef.current = false;
     setCheckingStar(false);
     if (result.ok) {
+      setStarNeedsReconnect(false);
       if (result.profile) {
         setProfile(result.profile);
         setProfileState("live");
       }
       setStarNote(result.message || null);
     } else {
+      setStarNeedsReconnect(result.reconnect === true);
       setStarNote(result.error || "We couldn't check just now — please try again.");
     }
     return result;
   }, []);
+
+  // Disconnect the linked GitHub profile: clears the verified identity, the
+  // stored OAuth token and every publishing-gate flag — publishing access is
+  // taken back until the developer reconnects and re-stars.
+  const disconnectGithub = async () => {
+    const current = readAuth();
+    if (!current?.token || disconnecting) return;
+    setDisconnecting(true);
+    const result = await postProfileAction(current.token, {
+      action: "disconnect-github",
+    });
+    setDisconnecting(false);
+    setConfirmDisconnect(false);
+    if (result.ok) {
+      if (result.profile) {
+        setProfile(result.profile);
+        setProfileState("live");
+      }
+      setStarNote(null);
+      setStarNeedsReconnect(false);
+      setConnectError(null);
+    } else {
+      setConnectError(result.error || "We couldn't disconnect — please try again.");
+    }
+  };
 
   // Return leg of the GitHub OAuth round-trip: /api/github/callback bounces
   // back here with ?github=<flag>. Sync the profile, surface any error and —
@@ -410,42 +440,82 @@ export function DeveloperDashboard() {
                     ) : null}
                   </div>
                   {profile?.githubConnected ? (
-                    <div className="mt-3 flex items-start gap-3">
-                      {profile.githubUsername ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={githubAvatarSrc(profile.githubUsername)}
-                          alt=""
-                          referrerPolicy="no-referrer"
-                          className="size-10 shrink-0 rounded-full border bg-muted"
-                        />
-                      ) : null}
-                      <div className="min-w-0 text-sm">
-                        <p className="flex flex-wrap items-center gap-x-2">
-                          <span className="font-medium text-foreground">
-                            {profile.githubName || `@${profile.githubUsername}`}
-                          </span>
-                          <a
-                            href={`https://github.com/${profile.githubUsername}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-0.5 text-muted-foreground underline underline-offset-4 hover:no-underline"
-                          >
-                            @{profile.githubUsername}
-                            <ExternalLink className="size-3" aria-hidden="true" />
-                          </a>
-                        </p>
-                        {profile.githubEmail ? (
-                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {profile.githubEmail}
-                          </p>
+                    <>
+                      <div className="mt-3 flex items-start gap-3">
+                        {profile.githubUsername ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={githubAvatarSrc(profile.githubUsername)}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                            className="size-10 shrink-0 rounded-full border bg-muted"
+                          />
                         ) : null}
-                        <p className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
-                          <BadgeCheck className="size-3.5" aria-hidden="true" />
-                          Identity verified via GitHub
-                        </p>
+                        <div className="min-w-0 text-sm">
+                          <p className="flex flex-wrap items-center gap-x-2">
+                            <span className="font-medium text-foreground">
+                              {profile.githubName || `@${profile.githubUsername}`}
+                            </span>
+                            <a
+                              href={`https://github.com/${profile.githubUsername}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-0.5 text-muted-foreground underline underline-offset-4 hover:no-underline"
+                            >
+                              @{profile.githubUsername}
+                              <ExternalLink className="size-3" aria-hidden="true" />
+                            </a>
+                          </p>
+                          {profile.githubEmail ? (
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {profile.githubEmail}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                            <BadgeCheck className="size-3.5" aria-hidden="true" />
+                            Identity verified via GitHub
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                      {confirmDisconnect ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            This unlinks your GitHub profile and takes back publishing access.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => void disconnectGithub()}
+                            disabled={disconnecting}
+                          >
+                            {disconnecting ? "Disconnecting…" : "Yes, disconnect"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmDisconnect(false)}
+                            disabled={disconnecting}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="mt-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                            onClick={() => setConfirmDisconnect(true)}
+                            disabled={disconnecting}
+                          >
+                            Disconnect GitHub
+                          </Button>
+                        </div>
+                      )}
+                    </>
                   ) : oauthConfigured === false ? (
                     <>
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
@@ -580,6 +650,24 @@ export function DeveloperDashboard() {
                         <p className="mt-2 text-xs text-amber-700 dark:text-amber-400" role="status">
                           {starNote}
                         </p>
+                      ) : null}
+                      {starNeedsReconnect ? (
+                        <div className="mt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={connectGithubOauth}
+                            disabled={connecting}
+                          >
+                            {connecting ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Github className="size-4" aria-hidden="true" />
+                            )}
+                            Reconnect GitHub
+                          </Button>
+                        </div>
                       ) : null}
                     </>
                   )}
