@@ -259,7 +259,7 @@ export async function getSessionUser(env, request) {
     return await env.DB.prepare(
       `SELECT u.nickname, u.username, u.email, u.github_username,
               u.github_connected_at, u.github_name, u.github_email,
-              u.github_avatar_url, u.starred_at, u.publish_access, u.created_at
+              u.starred_at, u.publish_access, u.created_at
        FROM sessions s JOIN users u ON u.username = s.username
        WHERE s.token = ?1 AND s.expires_at > ?2
        LIMIT 1`
@@ -291,7 +291,6 @@ export async function ensureProfileSchema(env) {
       github_connected_at TEXT,
       github_name TEXT,
       github_email TEXT,
-      github_avatar_url TEXT,
       starred_at TEXT,
       publish_access INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -311,7 +310,6 @@ export async function ensureProfileSchema(env) {
     "ALTER TABLE users ADD COLUMN github_connected_at TEXT",
     "ALTER TABLE users ADD COLUMN github_name TEXT",
     "ALTER TABLE users ADD COLUMN github_email TEXT",
-    "ALTER TABLE users ADD COLUMN github_avatar_url TEXT",
     "ALTER TABLE users ADD COLUMN starred_at TEXT",
     "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0",
   ]) {

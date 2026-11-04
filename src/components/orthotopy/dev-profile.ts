@@ -15,9 +15,17 @@ export interface DevProfile {
   githubUsername: string | null;
   githubName: string | null;
   githubEmail: string | null;
-  githubAvatarUrl: string | null;
   starred: boolean;
   publishAccess: boolean;
+}
+
+/**
+ * GitHub serves each member's avatar straight from their login —
+ * https://github.com/<login>.png redirects to the CDN image. So the avatar
+ * needs no database column: it is derived from the stored github_username.
+ */
+export function githubAvatarSrc(username: string): string {
+  return `https://github.com/${encodeURIComponent(username)}.png`;
 }
 
 export const PROFILE_KEY = "orthotopy_dev_profile";
@@ -29,7 +37,6 @@ function normalizeProfile(raw: Partial<DevProfile> | null | undefined): DevProfi
     githubUsername: raw?.githubUsername || null,
     githubName: raw?.githubName || null,
     githubEmail: raw?.githubEmail || null,
-    githubAvatarUrl: raw?.githubAvatarUrl || null,
     starred: Boolean(raw?.starred),
     publishAccess: Boolean(raw?.publishAccess),
   };

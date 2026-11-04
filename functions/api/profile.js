@@ -74,7 +74,6 @@ function profilePayload(row) {
     githubUsername,
     githubName: row.github_name ? String(row.github_name) : null,
     githubEmail: row.github_email ? String(row.github_email) : null,
-    githubAvatarUrl: row.github_avatar_url ? String(row.github_avatar_url) : null,
     starred,
     publishAccess: row.publish_access === 1 || (Boolean(githubUsername) && starred),
   };
@@ -222,7 +221,7 @@ export async function onRequestPost({ request, env }) {
 
     const fresh = await env.DB
       .prepare(
-        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, github_avatar_url, starred_at, publish_access, created_at FROM users WHERE username = ?1"
+        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, starred_at, publish_access, created_at FROM users WHERE username = ?1"
       )
       .bind(user.username)
       .first();
@@ -395,7 +394,7 @@ export async function onRequestPost({ request, env }) {
 
     const fresh = await env.DB
       .prepare(
-        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, github_avatar_url, starred_at, publish_access, created_at FROM users WHERE username = ?1"
+        "SELECT nickname, username, email, github_username, github_connected_at, github_name, github_email, starred_at, publish_access, created_at FROM users WHERE username = ?1"
       )
       .bind(user.username)
       .first();

@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { usePublish } from "./site-shell";
 import {
   fetchProfile,
+  githubAvatarSrc,
   postProfileAction,
   readCachedProfile,
   clearCachedProfile,
@@ -410,10 +411,10 @@ export function DeveloperDashboard() {
                   </div>
                   {profile?.githubConnected ? (
                     <div className="mt-3 flex items-start gap-3">
-                      {profile.githubAvatarUrl ? (
+                      {profile.githubUsername ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={profile.githubAvatarUrl}
+                          src={githubAvatarSrc(profile.githubUsername)}
                           alt=""
                           referrerPolicy="no-referrer"
                           className="size-10 shrink-0 rounded-full border bg-muted"

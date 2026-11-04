@@ -9,11 +9,12 @@
  *      Orthotopy username, the origin to return to and the redirect_uri used.
  *      It is one-time and expires after 10 minutes.
  *   2. The code is exchanged for an access token at github.com.
- *   3. The token reads the GitHub identity: GET /user (login, name, avatar)
- *      and GET /user/emails (primary verified email — scope user:email).
+ *   3. The token reads the GitHub identity: GET /user (login, name) and
+ *      GET /user/emails (primary verified email — scope user:email).
  *   4. The identity is written to the Orthotopy account (github_username,
- *      github_name, github_email, github_avatar_url). One GitHub profile can
- *      only ever be linked to one account.
+ *      github_name, github_email). One GitHub profile can only ever be
+ *      linked to one account. The avatar is NOT stored — the dashboard
+ *      derives it from the login via https://github.com/<login>.png.
  *   5. 302 back to <origin>/dashboard?github=connected — the dashboard sees
  *      the flag, re-syncs the profile and auto-runs the star check.
  *
@@ -161,15 +162,14 @@ export async function onRequestGet({ request, env }) {
     await env.DB
       .prepare(
         `UPDATE users SET github_username = ?1, github_connected_at = ?2,
-         github_name = ?3, github_email = ?4, github_avatar_url = ?5
-         WHERE username = ?6`
+         github_name = ?3, github_email = ?4, github_avatar_url = NULL
+         WHERE username = ?5`
       )
       .bind(
         login,
         new Date().toISOString(),
         ghUser.name ? String(ghUser.name) : null,
         primaryEmail,
-        ghUser.avatar_url ? String(ghUser.avatar_url) : null,
         username
       )
       .run();
