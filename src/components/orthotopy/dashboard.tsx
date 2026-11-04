@@ -1,28 +1,45 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   BadgeCheck,
+  CheckCircle2,
   Code2,
   ExternalLink,
+  Github,
+  Loader2,
+  Lock,
+  LogOut,
   Package,
+  RefreshCw,
   Rocket,
   Sparkles,
-  Loader2,
-  LogOut,
+  Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { usePublish } from "./site-shell";
+import {
+  fetchProfile,
+  postProfileAction,
+  readCachedProfile,
+  clearCachedProfile,
+  REPO_URL,
+  type DevProfile,
+} from "./dev-profile";
 
 /**
  * Developer dashboard — the landing spot right after "Account created!".
  *
- * Auth model (for now): the signup flow writes the session into
- * localStorage (`orthotopy_dev_auth`) once the email code is verified;
- * this page reads it and bounces unsigned visitors to /dev. A proper
- * server-session login can replace this later without changing the route.
+ * Auth model: signup/sign-in store a session in localStorage
+ * (`orthotopy_dev_auth`, including a bearer token for /api/profile).
+ *
+ * Publishing gate: before the FIRST work can be published, the account must
+ * (1) connect a GitHub profile and (2) star reorthotope/Orthotopy. Both are
+ * verified server-side; until then the publish actions open the setup card
+ * below and the publish dialog shows the checklist instead of the form.
  */
 
 interface DevAuth {
@@ -30,9 +47,11 @@ interface DevAuth {
   username: string;
   email: string;
   createdAt: string;
+  token?: string;
 }
 
 const AUTH_KEY = "orthotopy_dev_auth";
+const AUTH_EVENT = "orthotopy:auth";
 
 function readAuth(): DevAuth | null {
   try {
@@ -45,6 +64,7 @@ function readAuth(): DevAuth | null {
       username: parsed.username,
       email: parsed.email,
       createdAt: parsed.createdAt || new Date().toISOString(),
+      token: parsed.token || "",
     };
   } catch {
     return null;
@@ -57,6 +77,49 @@ export function DeveloperDashboard() {
   const [auth, setAuth] = useState<DevAuth | null>(null);
   const [ready, setReady] = useState(false);
 
+  // Publishing-gate state
+  const [profile, setProfile] = useState<DevProfile | null>(null);
+  const [profileState, setProfileState] = useState<
+    "loading" | "live" | "stale" | "unauthorized" | "none"
+  >("loading");
+  const [ghInput, setGhInput] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [checkingStar, setCheckingStar] = useState(false);
+  const [starNote, setStarNote] = useState<string | null>(null);
+  const setupRef = useRef<HTMLDivElement | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    // Read straight from localStorage — this also runs on first mount, before
+    // the `auth` state has been set, so the ref/state isn't reliable yet.
+    const current = readAuth();
+    if (!current) return;
+    if (!current.token) {
+      // Signed up before sessions existed — the server can't confirm the
+      // gate state, so fall back to the cache and ask for a re-sign-in.
+      const cached = readCachedProfile();
+      setProfile(cached);
+      setProfileState(cached ? "stale" : "none");
+      return;
+    }
+    setProfileState("loading");
+    const result = await fetchProfile(current.token);
+    if (result.status === "ok" && result.profile) {
+      setProfile(result.profile);
+      setProfileState("live");
+      return;
+    }
+    if (result.status === "unauthorized") {
+      const cached = readCachedProfile();
+      setProfile(cached);
+      setProfileState(cached && cached.publishAccess ? "stale" : "unauthorized");
+      return;
+    }
+    const cached = readCachedProfile();
+    setProfile(cached);
+    setProfileState(cached ? "stale" : "none");
+  }, []);
+
   useEffect(() => {
     const next = readAuth();
     if (!next) {
@@ -65,16 +128,69 @@ export function DeveloperDashboard() {
     }
     setAuth(next);
     setReady(true);
-  }, [router]);
+    void loadProfile();
+  }, [router, loadProfile]);
 
   const signOut = () => {
     try {
       localStorage.removeItem(AUTH_KEY);
-      window.dispatchEvent(new Event("orthotopy:auth"));
+      clearCachedProfile();
+      window.dispatchEvent(new Event(AUTH_EVENT));
     } catch {
       // ignore
     }
     router.replace("/");
+  };
+
+  const connectGithub = async () => {
+    if (connecting || !auth?.token) return;
+    const username = ghInput.trim();
+    if (!username) {
+      setConnectError("Enter your GitHub username first.");
+      return;
+    }
+    setConnecting(true);
+    setConnectError(null);
+    const result = await postProfileAction(auth.token, {
+      action: "connect-github",
+      username,
+    });
+    setConnecting(false);
+    if (result.ok && result.profile) {
+      setProfile(result.profile);
+      setProfileState("live");
+      setGhInput("");
+    } else {
+      setConnectError(result.error || "We couldn't connect that — please try again.");
+    }
+  };
+
+  const checkStar = async () => {
+    if (checkingStar || !auth?.token) return;
+    setCheckingStar(true);
+    setStarNote(null);
+    const result = await postProfileAction(auth.token, { action: "check-star" });
+    setCheckingStar(false);
+    if (result.ok) {
+      if (result.profile) {
+        setProfile(result.profile);
+        setProfileState("live");
+      }
+      setStarNote(result.message || null);
+    } else {
+      setStarNote(result.error || "We couldn't check just now — please try again.");
+    }
+  };
+
+  const scrollToSetup = () =>
+    setupRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  const handlePublishClick = () => {
+    if (profile?.publishAccess) {
+      publish();
+      return;
+    }
+    scrollToSetup();
   };
 
   if (!ready || !auth) {
@@ -92,16 +208,12 @@ export function DeveloperDashboard() {
     day: "numeric",
   });
 
+  const unlocked = Boolean(profile?.publishAccess);
+
   const stats = [
     { icon: Package, value: "0", label: "works published" },
     { icon: Code2, value: "Developer", label: "your role" },
     { icon: Sparkles, value: "Free", label: "plan — forever" },
-  ];
-
-  const nextSteps = [
-    "Set up your developer profile — coming soon to this dashboard.",
-    "Publish your first work and see it listed in the catalog.",
-    "Say hi on GitHub and help shape the roadmap.",
   ];
 
   return (
@@ -135,6 +247,15 @@ export function DeveloperDashboard() {
               </span>
               <span aria-hidden="true">·</span>
               <span>Member since {joined}</span>
+              {unlocked ? (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                    Publishing unlocked
+                  </span>
+                </>
+              ) : null}
             </p>
           </div>
           <div className="sm:ml-auto">
@@ -143,6 +264,225 @@ export function DeveloperDashboard() {
               Sign out
             </Button>
           </div>
+        </div>
+
+        {/* Dev profile setup — the gate before the first publish */}
+        <div ref={setupRef} id="dev-profile-setup" className="mt-8 scroll-mt-24">
+          {profileState === "unauthorized" ? (
+            <div className="rounded-2xl border bg-card p-6 sm:p-8">
+              <h2 className="text-lg font-semibold tracking-tight">
+                Set up your dev profile
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                Your session is out of date, so we can&#39;t sync your profile.
+                Sign in again with your username/email and password — it takes
+                seconds and your progress is kept.
+              </p>
+              <Button className="mt-4" asChild>
+                <a href="/dev">Sign in again</a>
+              </Button>
+            </div>
+          ) : unlocked ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+              <div className="flex items-start gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="size-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">Dev profile ready — publishing unlocked</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    GitHub connected{profile?.githubUsername ? ` as @${profile.githubUsername}` : ""}{" "}
+                    · repository starred. Publish as many works as you like.
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={loadProfile}>
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                Refresh status
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-2xl border bg-card p-6 sm:p-8">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+                    <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
+                    Set up your dev profile
+                  </h2>
+                  <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                    Two quick steps before you publish your first work — connect
+                    your GitHub profile and star the Orthotopy repository. Do it
+                    once and publishing stays unlocked.
+                  </p>
+                </div>
+                {profileState === "stale" ? (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                    showing saved status
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {/* Step 1 — connect GitHub */}
+                <div className="rounded-2xl border bg-background p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold text-muted-foreground">
+                        1
+                      </span>
+                      <Github className="size-4" aria-hidden="true" />
+                      Connect your GitHub profile
+                    </p>
+                    {profile?.githubConnected ? (
+                      <CheckCircle2
+                        className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                        aria-label="GitHub connected"
+                      />
+                    ) : null}
+                  </div>
+                  {profile?.githubConnected ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Connected as{" "}
+                      <a
+                        href={`https://github.com/${profile.githubUsername}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                      >
+                        @{profile.githubUsername}
+                        <ExternalLink className="size-3" aria-hidden="true" />
+                      </a>
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        We check the username with GitHub, so it has to be a
+                        real account — it&#39;s how you&#39;ll submit and track
+                        your works.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Input
+                          value={ghInput}
+                          onChange={(event) => setGhInput(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void connectGithub();
+                            }
+                          }}
+                          placeholder="your-github-username"
+                          spellCheck={false}
+                          autoComplete="off"
+                          className="min-w-44 flex-1"
+                          disabled={connecting || profileState === "unauthorized"}
+                        />
+                        <Button
+                          type="button"
+                          onClick={connectGithub}
+                          disabled={connecting || profileState === "unauthorized"}
+                        >
+                          {connecting ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Github className="size-4" aria-hidden="true" />
+                          )}
+                          {connecting ? "Connecting…" : "Connect"}
+                        </Button>
+                      </div>
+                      {connectError ? (
+                        <p className="mt-2 text-xs text-destructive" role="alert">
+                          {connectError}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+
+                {/* Step 2 — star the repo */}
+                <div className="rounded-2xl border bg-background p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold text-muted-foreground">
+                        2
+                      </span>
+                      <Star className="size-4" aria-hidden="true" />
+                      Star the Orthotopy repository
+                    </p>
+                    {profile?.starred ? (
+                      <CheckCircle2
+                        className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                        aria-label="Repository starred"
+                      />
+                    ) : null}
+                  </div>
+                  {profile?.starred ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Star confirmed — thanks for supporting the project!
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        Stars are how the project grows. Open the repository,
+                        press the Star button, then verify below.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button type="button" variant="outline" asChild>
+                          <a href={REPO_URL} target="_blank" rel="noreferrer">
+                            <Github className="size-4" aria-hidden="true" />
+                            Open repository
+                            <ExternalLink className="size-3" aria-hidden="true" />
+                          </a>
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={checkStar}
+                          disabled={
+                            checkingStar ||
+                            !profile?.githubConnected ||
+                            profileState === "unauthorized"
+                          }
+                        >
+                          {checkingStar ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Star className="size-4" aria-hidden="true" />
+                          )}
+                          {checkingStar ? "Checking…" : "I starred it — verify"}
+                        </Button>
+                      </div>
+                      {!profile?.githubConnected ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Connect your GitHub profile first — that&#39;s how we
+                          find your star.
+                        </p>
+                      ) : null}
+                      {starNote ? (
+                        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400" role="status">
+                          {starNote}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {profileState === "none" || profileState === "stale" ? (
+                <p className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2"
+                    onClick={loadProfile}
+                  >
+                    <RefreshCw className="size-3" aria-hidden="true" />
+                    Retry sync
+                  </Button>
+                  Couldn&#39;t reach the profile service just now.
+                </p>
+              ) : null}
+            </div>
+          )}
         </div>
 
         {/* Stats */}
@@ -165,16 +505,26 @@ export function DeveloperDashboard() {
             <div className="mt-3 space-y-3">
               <button
                 type="button"
-                onClick={publish}
+                onClick={handlePublishClick}
                 className="flex w-full items-center gap-4 rounded-2xl border bg-card p-4 text-left transition-colors hover:bg-accent"
               >
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                   <Rocket className="size-5" aria-hidden="true" />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium">Publish a work</span>
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    Publish a work
+                    {!unlocked ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                        <Lock className="size-3" aria-hidden="true" />
+                        finish setup above
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    List your app, game, extension or anything else in the catalog.
+                    {!unlocked
+                      ? "Connect GitHub and star the repo to unlock publishing."
+                      : "List your app, game, extension or anything else in the catalog."}
                   </span>
                 </span>
               </button>
@@ -218,7 +568,18 @@ export function DeveloperDashboard() {
             </h2>
             <div className="mt-3 rounded-2xl border bg-card p-5">
               <ol className="space-y-3">
-                {nextSteps.map((step, index) => (
+                {(unlocked
+                  ? [
+                      "Publish your first work and see it listed in the catalog.",
+                      "Set up your developer profile — coming soon to this dashboard.",
+                      "Say hi on GitHub and help shape the roadmap.",
+                    ]
+                  : [
+                      "Connect your GitHub profile — step 1 above.",
+                      "Star the Orthotopy repository — step 2 above.",
+                      "Publish your first work once both are checked.",
+                    ]
+                ).map((step, index) => (
                   <li key={step} className="flex gap-3 text-sm">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold text-muted-foreground">
                       {index + 1}

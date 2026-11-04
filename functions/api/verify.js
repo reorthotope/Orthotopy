@@ -6,10 +6,13 @@
  *
  * Checks the emailed code, then creates the dev-team account row in D1 with a
  * salted PBKDF2 password hash. Codes are single-use and deleted on success.
+ * On success a bearer session token is returned so the fresh account can use
+ * the profile endpoints (GET/POST /api/profile) right away.
  *
  * Bindings & variables:
  *   CODES                KV namespace (required)
- *   DB                   D1 database (schema: migrations/0001_users.sql, required)
+ *   DB                   D1 database (schema: migrations/0001_users.sql +
+ *                        migrations/0002_github_profile.sql, required)
  *   TURNSTILE_SECRET_KEY Turnstile secret (optional — check is skipped while unset)
  */
 
@@ -18,6 +21,8 @@ import {
   EMAIL_RE,
   MAX_ATTEMPTS,
   PHONE_RE,
+  createSession,
+  ensureProfileSchema,
   hashPassword,
   json,
   usernameError,
@@ -120,20 +125,9 @@ export async function onRequestPost({ request, env }) {
 
   // Code accepted — make sure the username/email are still free before hashing.
   try {
-    // Self-healing schema: creating the table here means binding a fresh D1
+    // Self-healing schema: creating the tables here means binding a fresh D1
     // database is enough — no manual migration step required.
-    await env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nickname TEXT NOT NULL,
-        username TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL UNIQUE,
-        phone TEXT,
-        password_hash TEXT NOT NULL,
-        email_verified INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`
-    ).run();
+    await ensureProfileSchema(env);
     const taken = await env.DB
       .prepare("SELECT username, email FROM users WHERE username = ?1 OR email = ?2")
       .bind(values.username, values.email)
@@ -169,5 +163,15 @@ export async function onRequestPost({ request, env }) {
   }
 
   await env.CODES.delete(key); // single-use
-  return json({ ok: true });
+
+  // Hand the fresh account a session so the dashboard can call /api/profile
+  // (GitHub connect + star check) without a second sign-in.
+  let token = null;
+  try {
+    token = await createSession(env, values.username);
+  } catch (err) {
+    console.error(`verify: session create failed: ${err && err.message}`);
+  }
+
+  return json({ ok: true, token });
 }

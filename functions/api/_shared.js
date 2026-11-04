@@ -1,6 +1,6 @@
 /**
  * Shared helpers for the Orthotopy Pages Functions.
- * Imported by functions/api/request-code.js and functions/api/verify.js.
+ * Imported by functions/api/request-code.js, verify.js, login.js and profile.js.
  */
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -12,6 +12,13 @@ export const RESEND_COOLDOWN_MS = 45_000;
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PHONE_RE = /^\+?[0-9](?:[0-9\s-]{5,17})[0-9]$/;
+
+// The repository developers must star before their first publish.
+// Override with the GITHUB_REPO variable (e.g. for local testing).
+export function githubRepo(env) {
+  const repo = String(env?.GITHUB_REPO ?? "").trim();
+  return /^[^\s/]+\/[^\s/]+$/.test(repo) ? repo : "reorthotope/Orthotopy";
+}
 
 /**
  * Username policy (mirror of src/lib/verification.ts — keep both in sync):
@@ -186,5 +193,102 @@ export async function verifyPassword(password, stored) {
     return diff === 0;
   } catch {
     return false;
+  }
+}
+
+// --- sessions: opaque bearer tokens so profile endpoints know the caller ---
+
+export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+export function generateToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Creates a session row and returns the bearer token. `expires_at` is stored
+ * as an ISO-8601 UTC string so the lexicographic comparison in
+ * getSessionUser works in SQLite.
+ */
+export async function createSession(env, username) {
+  const token = generateToken();
+  const now = new Date();
+  await env.DB.prepare(
+    "INSERT INTO sessions (token, username, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)"
+  )
+    .bind(
+      token,
+      username,
+      now.toISOString(),
+      new Date(now.getTime() + SESSION_TTL_MS).toISOString()
+    )
+    .run();
+  return token;
+}
+
+/** Resolves the Authorization: Bearer header to a users row, or null. */
+export async function getSessionUser(env, request) {
+  const header = request.headers.get("authorization") || "";
+  const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  if (!match || !env.DB || typeof env.DB.prepare !== "function") return null;
+  try {
+    return await env.DB.prepare(
+      `SELECT u.nickname, u.username, u.email, u.github_username,
+              u.github_connected_at, u.starred_at, u.publish_access, u.created_at
+       FROM sessions s JOIN users u ON u.username = s.username
+       WHERE s.token = ?1 AND s.expires_at > ?2
+       LIMIT 1`
+    )
+      .bind(match[1], new Date().toISOString())
+      .first();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Self-healing schema for accounts + profile/publish-gate columns. Creating
+ * the tables here means binding a fresh D1 database is enough — no manual
+ * migration step required (mirrors migrations/0001_users.sql and
+ * migrations/0002_github_profile.sql).
+ */
+export async function ensureProfileSchema(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nickname TEXT NOT NULL,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      phone TEXT,
+      password_hash TEXT NOT NULL,
+      email_verified INTEGER NOT NULL DEFAULT 0,
+      github_username TEXT,
+      github_connected_at TEXT,
+      starred_at TEXT,
+      publish_access INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  ).run();
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )`
+  ).run();
+  // Older databases were created before the GitHub-profile columns existed.
+  for (const sql of [
+    "ALTER TABLE users ADD COLUMN github_username TEXT",
+    "ALTER TABLE users ADD COLUMN github_connected_at TEXT",
+    "ALTER TABLE users ADD COLUMN starred_at TEXT",
+    "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0",
+  ]) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch (err) {
+      const msg = String((err && err.message) || "");
+      if (!/duplicate column|already exists/i.test(msg)) throw err;
+    }
   }
 }

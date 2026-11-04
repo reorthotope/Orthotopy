@@ -14,7 +14,14 @@
  *   TURNSTILE_SECRET_KEY Turnstile secret (optional — check is skipped while unset)
  */
 
-import { EMAIL_RE, json, verifyPassword, verifyTurnstile } from "./_shared.js";
+import {
+  createSession,
+  ensureProfileSchema,
+  EMAIL_RE,
+  json,
+  verifyPassword,
+  verifyTurnstile,
+} from "./_shared.js";
 
 export async function onRequestPost({ request, env }) {
   if (!env.DB || typeof env.DB.prepare !== "function") {
@@ -43,18 +50,7 @@ export async function onRequestPost({ request, env }) {
   // Self-healing schema — identical to verify.js so a fresh D1 binding works
   // without a manual migration step.
   try {
-    await env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nickname TEXT NOT NULL,
-        username TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL UNIQUE,
-        phone TEXT,
-        password_hash TEXT NOT NULL,
-        email_verified INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`
-    ).run();
+    await ensureProfileSchema(env);
   } catch (err) {
     console.error(`login: d1 schema check failed: ${err && err.message}`);
     return json({ error: "Database not ready — run migrations/0001_users.sql on the D1 database." }, 500);
@@ -89,8 +85,18 @@ export async function onRequestPost({ request, env }) {
     createdAt = `${String(createdAt).replace(" ", "T")}Z`;
   }
 
+  // Session token so the client can call /api/profile (GitHub connect +
+  // star check) and future account endpoints.
+  let token = null;
+  try {
+    token = await createSession(env, row.username);
+  } catch (err) {
+    console.error(`login: session create failed: ${err && err.message}`);
+  }
+
   return json({
     ok: true,
+    token,
     user: {
       nickname: row.nickname,
       username: row.username,

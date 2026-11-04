@@ -101,6 +101,7 @@ interface RequestCodeResponse {
 
 interface VerifyResponse {
   ok?: boolean;
+  token?: string;
   error?: string;
   field?: string;
   fields?: Record<string, string>;
@@ -108,6 +109,7 @@ interface VerifyResponse {
 
 interface LoginResponse {
   ok?: boolean;
+  token?: string;
   error?: string;
   user?: {
     nickname?: string;
@@ -263,6 +265,7 @@ export function JoinDevForm() {
               username: v.username.trim().toLowerCase(),
               email: sentEmailRef.current,
               createdAt: new Date().toISOString(),
+              token: data.token || "",
             })
           );
           window.dispatchEvent(new Event(AUTH_EVENT));
@@ -397,6 +400,7 @@ export function JoinDevForm() {
               username: data.user.username || "",
               email: data.user.email || "",
               createdAt: data.user.createdAt || new Date().toISOString(),
+              token: data.token || "",
             })
           );
           window.dispatchEvent(new Event(AUTH_EVENT));
