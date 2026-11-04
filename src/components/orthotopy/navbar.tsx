@@ -7,6 +7,7 @@ import { Github, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Logo } from "./logo";
+import { AccountMenu } from "./account-menu";
 import { cn } from "@/lib/utils";
 
 const AUTH_KEY = "orthotopy_dev_auth";
@@ -90,11 +91,13 @@ export function Navbar() {
               <Github className="size-4" aria-hidden="true" />
             </a>
           </Button>
-          <Button size="sm" className="ml-1" asChild>
-            <Link href={authed ? "/dashboard" : "/dev"}>
-              {authed ? "Dashboard" : "Join Dev Team"}
-            </Link>
-          </Button>
+          {authed ? (
+            <AccountMenu />
+          ) : (
+            <Button size="sm" className="ml-1" asChild>
+              <Link href="/dev">Join Dev Team</Link>
+            </Button>
+          )}
         </div>
       </div>
       {/* Compact category row for tablet/mobile where the main nav is hidden */}
