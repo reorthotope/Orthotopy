@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, Github, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   readAuth,
   readCachedProfile,
@@ -30,6 +31,9 @@ export function JoinDevForm() {
   const [state, setState] = useState<JoinState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [signedInAs, setSignedInAs] = useState<string | null>(null);
+  // Creating a developer account is entering an agreement: the button stays
+  // locked until the Terms & Conditions and the Privacy Policy are accepted.
+  const [agreed, setAgreed] = useState(false);
 
   // Already holding a session? Show the "you're in" card instead.
   useEffect(() => {
@@ -127,12 +131,44 @@ export function JoinDevForm() {
             </li>
           ))}
         </ul>
-        <div className="mt-8">
+        <div className="mt-8 space-y-4">
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              id="join-terms"
+              checked={agreed}
+              onCheckedChange={(checked) => setAgreed(checked === true)}
+              className="mt-0.5"
+            />
+            {/* A plain label: the shadcn Label is flex and would spread this
+                long sentence into scattered flex items. */}
+            <label
+              htmlFor="join-terms"
+              className="text-xs font-normal leading-relaxed text-muted-foreground"
+            >
+              I agree to the{" "}
+              <Link
+                href="/terms"
+                target="_blank"
+                className="font-medium text-foreground underline underline-offset-4 hover:text-emerald-600 dark:hover:text-emerald-400"
+              >
+                Terms &amp; Conditions
+              </Link>{" "}
+              — including the developer publishing rules — and the{" "}
+              <Link
+                href="/privacy"
+                target="_blank"
+                className="font-medium text-foreground underline underline-offset-4 hover:text-emerald-600 dark:hover:text-emerald-400"
+              >
+                Privacy Policy
+              </Link>
+              .
+            </label>
+          </div>
           <Button
             size="lg"
             className="w-full"
             onClick={() => void join()}
-            disabled={state === "opening"}
+            disabled={state === "opening" || !agreed}
           >
             {state === "opening" ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -142,11 +178,11 @@ export function JoinDevForm() {
             {state === "opening" ? "Opening GitHub…" : "Join with GitHub"}
           </Button>
           {error ? (
-            <p className="mt-3 text-center text-xs text-destructive" role="alert">
+            <p className="text-center text-xs text-destructive" role="alert">
               {error}
             </p>
           ) : null}
-          <p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground">
+          <p className="text-center text-xs leading-relaxed text-muted-foreground">
             We only read your GitHub username, display name and verified email
             (read-only scope — no repositories, nothing posted). You can delete
             the account and its data any time from Settings.

@@ -33,6 +33,7 @@ const FOOTER_COLUMNS = [
         href: "https://github.com/reorthotope/Orthotopy/blob/main/LICENSE",
       },
       { label: "Privacy policy", href: "/privacy" },
+      { label: "Terms & conditions", href: "/terms" },
     ],
   },
 ];
