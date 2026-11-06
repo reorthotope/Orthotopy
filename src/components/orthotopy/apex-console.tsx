@@ -5,7 +5,8 @@
  *
  * A private, standalone admin surface: developer dashboard stats, the review
  * queue for published works, a CRM over every GitHub account, support
- * tickets and user reports. It lives outside the public SiteShell on
+ * tickets and user reports, plus a monetization tab parked as a
+ * "coming soon" placeholder. It lives outside the public SiteShell on
  * purpose — no navbar, no footer, no indexing.
  *
  * Auth: the passcode IS the ADMIN_TOKEN variable, checked server-side by
@@ -19,19 +20,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
   Check,
+  CircleDollarSign,
   ClipboardCheck,
   Download,
   ExternalLink,
   Flag,
   Github,
+  HandCoins,
   LayoutDashboard,
   LifeBuoy,
   Loader2,
   Lock,
   LogOut,
+  Receipt,
   RefreshCw,
   Search,
   Trash2,
+  TrendingUp,
   Users,
 } from "lucide-react";
 import {
@@ -1478,16 +1483,101 @@ function ReportsSection({ token, onTriaged }: { token: string; onTriaged: () => 
   );
 }
 
+// -------------------------------------------------------------- monetization
+
+/**
+ * Placeholder only — no API calls, no state, nothing wired up. The real
+ * monetization workspace (revenue, payouts, billing) replaces this panel
+ * when it ships; the sidebar already advertises it with a "Coming soon"
+ * chip so the slot is visible from day one.
+ */
+function MonetizationSection() {
+  const teasers = [
+    {
+      icon: TrendingUp,
+      title: "Revenue overview",
+      text: "Sales, subscriptions and earnings charted per day, per work.",
+    },
+    {
+      icon: HandCoins,
+      title: "Developer payouts",
+      text: "Split revenue with developers and pay out on a schedule.",
+    },
+    {
+      icon: Receipt,
+      title: "Billing history",
+      text: "Invoices, receipts and downloadable account statements.",
+    },
+  ];
+
+  return (
+    <div>
+      <SectionHeading
+        title="Monetization"
+        description="Money tools for the storefront — planned, not wired up yet."
+      />
+
+      <div className="mt-8 rounded-2xl border border-dashed p-8 sm:p-10">
+        <div className="text-center">
+          <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-amber-500/10">
+            <CircleDollarSign
+              className="size-7 text-amber-600 dark:text-amber-400"
+              aria-hidden="true"
+            />
+          </span>
+          <p className="mt-4 text-base font-semibold">Coming soon!</p>
+          <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+            This tab is a placeholder for now — the monetization workspace
+            will live here the moment it ships. Nothing on this panel reads
+            or moves money yet.
+          </p>
+        </div>
+
+        <div className="mt-8 space-y-3">
+          {teasers.map((teaser) => (
+            <div
+              key={teaser.title}
+              className="flex items-start gap-3 rounded-xl border bg-card/50 p-4 opacity-70"
+            >
+              <teaser.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{teaser.title}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{teaser.text}</p>
+              </div>
+              <span className="ml-auto shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                planned
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // -------------------------------------------------------------------- shell
 
-type SectionId = "dashboard" | "reviews" | "crm" | "tickets" | "reports";
+type SectionId = "dashboard" | "reviews" | "crm" | "tickets" | "reports" | "monetization";
 
-const SECTIONS: { id: SectionId; label: string; icon: typeof LayoutDashboard; blurb: string }[] = [
+const SECTIONS: {
+  id: SectionId;
+  label: string;
+  icon: typeof LayoutDashboard;
+  blurb: string;
+  comingSoon?: boolean;
+}[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, blurb: "Site-wide stats" },
   { id: "reviews", label: "Review requests", icon: ClipboardCheck, blurb: "Pending works" },
   { id: "crm", label: "CRM", icon: Users, blurb: "Developer accounts" },
   { id: "tickets", label: "Support tickets", icon: LifeBuoy, blurb: "Help requests" },
   { id: "reports", label: "User reports", icon: Flag, blurb: "Flagged content" },
+  {
+    id: "monetization",
+    label: "Monetization",
+    icon: CircleDollarSign,
+    blurb: "Payouts & revenue",
+    comingSoon: true,
+  },
 ];
 
 function ApexConsoleInner({ initialSession }: { initialSession: ApexSession }) {
@@ -1576,7 +1666,16 @@ function ApexConsoleInner({ initialSession }: { initialSession: ApexSession }) {
                   <item.icon className="size-4 shrink-0" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{item.label}</span>
-                    <span className="block truncate text-[11px] opacity-70">{item.blurb}</span>
+                    {item.comingSoon ? (
+                      <span className="mt-0.5 flex items-center gap-1.5">
+                        <span className="truncate text-[11px] opacity-70">{item.blurb}</span>
+                        <span className="shrink-0 whitespace-nowrap rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                          Coming soon
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="block truncate text-[11px] opacity-70">{item.blurb}</span>
+                    )}
                   </span>
                   {badge && badge > 0 ? (
                     <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
@@ -1631,6 +1730,10 @@ function ApexConsoleInner({ initialSession }: { initialSession: ApexSession }) {
                     <span className="rounded-full bg-emerald-500/15 px-1.5 text-[11px] font-semibold tabular-nums">
                       {badge}
                     </span>
+                  ) : item.comingSoon ? (
+                    <span className="whitespace-nowrap rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                      Coming soon
+                    </span>
                   ) : null}
                 </button>
               );
@@ -1653,6 +1756,7 @@ function ApexConsoleInner({ initialSession }: { initialSession: ApexSession }) {
             {section === "reports" ? (
               <ReportsSection token={token} onTriaged={() => void loadOverview()} />
             ) : null}
+            {section === "monetization" ? <MonetizationSection /> : null}
 
             <p className="mt-10 text-center text-xs text-muted-foreground">
               Apex · Orthotopy control console · sessions expire after 12 hours
