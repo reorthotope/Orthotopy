@@ -4,6 +4,7 @@ import {
   generateToken,
   githubTokenKey,
   json,
+  primaryDb,
   rateLimit,
 } from "./_shared.js";
 import { repoImageUrl } from "./_gh-repo.js";
@@ -98,7 +99,11 @@ function str(value, fallback = "") {
 // ------------------------------------------------------------------ handler
 
 export async function onRequestPost({ request, env }) {
-  if (!env.DB || typeof env.DB.prepare !== "function") {
+  // Every console action runs through the primary-pinned D1 session (the
+  // Sessions API — see _shared.js): what the admin just wrote must appear
+  // in the very next list the console reads.
+  const db = env?.DB ? primaryDb(env) : null;
+  if (!db) {
     return json({ error: "Database not ready." }, 500);
   }
 
@@ -167,17 +172,17 @@ export async function onRequestPost({ request, env }) {
       case "overview": {
         const [usersRow, accessRow, newUsersRow, worksRow, statsRow, ticketsRow, reportsRow] =
           await Promise.all([
-            env.DB.prepare("SELECT COUNT(*) AS n FROM users").first(),
-            env.DB
+            db.prepare("SELECT COUNT(*) AS n FROM users").first(),
+            db
               .prepare("SELECT COUNT(*) AS n FROM users WHERE publish_access = 1")
               .first(),
-            env.DB
+            db
               .prepare(
                 "SELECT COUNT(*) AS n FROM users WHERE created_at >= ?1"
               )
               .bind(new Date(Date.now() - 7 * 86400000).toISOString())
               .first(),
-            env.DB
+            db
               .prepare(
                 `SELECT COUNT(*) AS total,
                         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
@@ -186,28 +191,28 @@ export async function onRequestPost({ request, env }) {
                  FROM works`
               )
               .first(),
-            env.DB
+            db
               .prepare(
                 "SELECT COALESCE(SUM(views), 0) AS views, COALESCE(SUM(downloads), 0) AS downloads FROM work_stats_daily"
               )
               .first(),
-            env.DB
+            db
               .prepare(
                 "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open FROM support_tickets"
               )
               .first(),
-            env.DB
+            db
               .prepare(
                 "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open FROM user_reports"
               )
               .first(),
           ]);
 
-        const recentUsersRes = await env.DB.prepare(
+        const recentUsersRes = await db.prepare(
           `SELECT username, github_name, github_email, publish_access, created_at
            FROM users ORDER BY created_at DESC LIMIT 8`
         ).all();
-        const recentWorksRes = await env.DB.prepare(
+        const recentWorksRes = await db.prepare(
           `SELECT id, title, username, type, platform, status, created_at
            FROM works ORDER BY created_at DESC LIMIT 8`
         ).all();
@@ -215,7 +220,7 @@ export async function onRequestPost({ request, env }) {
         // 14-day activity series, gaps filled with zeros so the chart line
         // is continuous even on quiet days.
         const since = new Date(Date.now() - 13 * 86400000).toISOString().slice(0, 10);
-        const statsRes = await env.DB.prepare(
+        const statsRes = await db.prepare(
           `SELECT day, SUM(views) AS views, SUM(downloads) AS downloads
            FROM work_stats_daily WHERE day >= ?1 GROUP BY day`
         )
@@ -284,7 +289,7 @@ export async function onRequestPost({ request, env }) {
 
       // ----------------------------------------------- review requests
       case "review-list": {
-        const res = await env.DB.prepare(
+        const res = await db.prepare(
           `SELECT id, username, title, type, platform, description, repo_url, repo_owner, repo_name, download_url, images, created_at
            FROM works WHERE status = 'pending'
            ORDER BY created_at ASC, id ASC LIMIT 100`
@@ -321,7 +326,7 @@ export async function onRequestPost({ request, env }) {
           return json({ error: "Decision must be approve or reject." }, 400);
         }
         const status = decision === "approve" ? "approved" : "rejected";
-        const result = await env.DB
+        const result = await db
           .prepare("UPDATE works SET status = ?1, reviewed_at = ?2 WHERE id = ?3 AND status = 'pending'")
           .bind(status, new Date().toISOString(), id)
           .run();
@@ -334,7 +339,7 @@ export async function onRequestPost({ request, env }) {
       // ----------------------------------------------------------- CRM
       case "crm-list": {
         const q = cleanText(body?.q, 80).toLowerCase();
-        const res = await env.DB.prepare(
+        const res = await db.prepare(
           `SELECT u.username, u.github_name, u.github_email, u.starred_at,
                   u.publish_access, u.created_at, u.last_login_at,
                   COUNT(w.id) AS works_total,
@@ -371,7 +376,7 @@ export async function onRequestPost({ request, env }) {
         const username = cleanText(body?.username, 80);
         if (!username) return json({ error: "Missing username." }, 400);
         const publishAccess = body?.publishAccess ? 1 : 0;
-        const result = await env.DB
+        const result = await db
           .prepare("UPDATE users SET publish_access = ?1 WHERE username = ?2")
           .bind(publishAccess, username)
           .run();
@@ -384,22 +389,22 @@ export async function onRequestPost({ request, env }) {
       case "crm-delete": {
         const username = cleanText(body?.username, 80);
         if (!username) return json({ error: "Missing username." }, 400);
-        const exists = await env.DB
+        const exists = await db
           .prepare("SELECT 1 FROM users WHERE username = ?1 LIMIT 1")
           .bind(username)
           .first();
         if (!exists) return json({ error: "No account with that username." }, 404);
-        const wipedWorks = await env.DB
+        const wipedWorks = await db
           .prepare("DELETE FROM works WHERE username = ?1")
           .bind(username)
           .run();
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM sessions WHERE username = ?1").bind(username),
-          env.DB.prepare(
+        await db.batch([
+          db.prepare("DELETE FROM sessions WHERE username = ?1").bind(username),
+          db.prepare(
             "DELETE FROM work_stats_daily WHERE work_id NOT IN (SELECT id FROM works)"
           ),
         ]);
-        await env.DB.prepare("DELETE FROM users WHERE username = ?1").bind(username).run();
+        await db.prepare("DELETE FROM users WHERE username = ?1").bind(username).run();
         try {
           await env.CODES.delete(githubTokenKey(username));
         } catch {
@@ -417,10 +422,10 @@ export async function onRequestPost({ request, env }) {
         const status = cleanText(body?.status, 20);
         const stmt =
           status && TICKET_STATUSES.includes(status)
-            ? env.DB.prepare(
+            ? db.prepare(
                 "SELECT * FROM support_tickets WHERE status = ?1 ORDER BY created_at DESC LIMIT 200"
               ).bind(status)
-            : env.DB.prepare(
+            : db.prepare(
                 "SELECT * FROM support_tickets ORDER BY created_at DESC LIMIT 200"
               );
         const res = await stmt.all();
@@ -453,12 +458,12 @@ export async function onRequestPost({ request, env }) {
         if (priority && !TICKET_PRIORITIES.includes(priority)) {
           return json({ error: "Unknown ticket priority." }, 400);
         }
-        const current = await env.DB
+        const current = await db
           .prepare("SELECT status, priority, admin_note FROM support_tickets WHERE id = ?1 LIMIT 1")
           .bind(id)
           .first();
         if (!current) return json({ error: "No ticket with that id." }, 404);
-        await env.DB
+        await db
           .prepare(
             `UPDATE support_tickets
              SET status = ?1, priority = ?2, admin_note = ?3, updated_at = ?4
@@ -480,10 +485,10 @@ export async function onRequestPost({ request, env }) {
         const status = cleanText(body?.status, 20);
         const stmt =
           status && REPORT_STATUSES.includes(status)
-            ? env.DB.prepare(
+            ? db.prepare(
                 "SELECT * FROM user_reports WHERE status = ?1 ORDER BY created_at DESC LIMIT 200"
               ).bind(status)
-            : env.DB.prepare(
+            : db.prepare(
                 "SELECT * FROM user_reports ORDER BY created_at DESC LIMIT 200"
               );
         const res = await stmt.all();
@@ -513,12 +518,12 @@ export async function onRequestPost({ request, env }) {
         if (status && !REPORT_STATUSES.includes(status)) {
           return json({ error: "Unknown report status." }, 400);
         }
-        const current = await env.DB
+        const current = await db
           .prepare("SELECT status, admin_note FROM user_reports WHERE id = ?1 LIMIT 1")
           .bind(id)
           .first();
         if (!current) return json({ error: "No report with that id." }, 404);
-        await env.DB
+        await db
           .prepare(
             `UPDATE user_reports
              SET status = ?1, admin_note = ?2, updated_at = ?3
@@ -537,7 +542,7 @@ export async function onRequestPost({ request, env }) {
       case "report-remove-work": {
         const id = cleanText(body?.id, 80);
         if (!id) return json({ error: "Missing report id." }, 400);
-        const report = await env.DB
+        const report = await db
           .prepare("SELECT target_type, target_id, status FROM user_reports WHERE id = ?1 LIMIT 1")
           .bind(id)
           .first();
@@ -546,11 +551,11 @@ export async function onRequestPost({ request, env }) {
           return json({ error: "That report doesn't target a work." }, 400);
         }
         const targetId = str(report.target_id);
-        const removed = await env.DB
+        const removed = await db
           .prepare("UPDATE works SET status = 'rejected', reviewed_at = ?1 WHERE id = ?2")
           .bind(new Date().toISOString(), targetId)
           .run();
-        await env.DB
+        await db
           .prepare(
             "UPDATE user_reports SET status = 'resolved', updated_at = ?1 WHERE id = ?2"
           )

@@ -2,6 +2,7 @@ import {
   ensureProfileSchema,
   getSessionUser,
   json,
+  primaryDb,
 } from "./_shared.js";
 
 /**
@@ -45,8 +46,10 @@ export async function onRequestGet({ env, request }) {
 
   try {
     await ensureProfileSchema(env);
+    // Primary-pinned: the dashboard must reflect a work published seconds ago.
+    const db = primaryDb(env);
 
-    const worksRes = await env.DB
+    const worksRes = await db
       .prepare(
         `SELECT id, title, tagline, description, kind, category, type, platform,
                 icon, gradient, status, repo_url, download_url, images, created_at
@@ -76,7 +79,7 @@ export async function onRequestGet({ env, request }) {
 
     // Daily series for the user's works over the last SERIES_DAYS days.
     const since = utcDay(SERIES_DAYS - 1);
-    const statsRes = await env.DB
+    const statsRes = await db
       .prepare(
         `SELECT s.work_id, s.day, s.views, s.downloads
          FROM work_stats_daily s JOIN works w ON w.id = s.work_id

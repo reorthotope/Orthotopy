@@ -1,4 +1,4 @@
-import { ensureProfileSchema, generateToken, json, rateLimit, getSessionUser } from "./_shared.js";
+import { ensureProfileSchema, generateToken, json, primaryDb, rateLimit, getSessionUser } from "./_shared.js";
 
 /**
  * POST /api/support — public support-ticket intake, read and triaged in the
@@ -55,8 +55,10 @@ export async function onRequestPost({ request, env }) {
 
   try {
     await ensureProfileSchema(env);
+    // Primary-pinned — low-volume write path, keep it strictly consistent.
+    const db = primaryDb(env);
     const id = `tik_${generateToken().slice(0, 20)}`;
-    await env.DB
+    await db
       .prepare(
         `INSERT INTO support_tickets (id, username, contact, subject, message, status, priority, admin_note, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 'open', 'normal', '', ?6)`

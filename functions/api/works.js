@@ -3,6 +3,8 @@ import {
   getSessionUser,
   githubTokenKey,
   json,
+  primaryDb,
+  viewerDb,
 } from "./_shared.js";
 import {
   detectRepoImages,
@@ -29,8 +31,11 @@ import {
  * (POST /api/works-admin) it starts appearing in the public catalog feed
  * (GET /api/works) and the storefront, typically within 24–48 hours.
  *
- * GET /api/works — public feed of APPROVED works for the storefront. Safe to
- * cache briefly; contains only what is already public on GitHub.
+ * GET /api/works — public feed of APPROVED works for the storefront. This is
+ * the hot viewer read: it runs through viewerDb() so a D1 read replica can
+ * serve it (keeps replica-happy viewers off the primary; a second of
+ * eventual consistency is invisible here). Also safe to cache briefly;
+ * contains only what is already public on GitHub.
  *
  * Bindings:
  *   DB    D1 database (required — works table)
@@ -165,9 +170,12 @@ export async function onRequestPost({ request, env }) {
 
   try {
     await ensureProfileSchema(env);
+    // Publish path is primary-pinned: the pending-count check and the id
+    // clash probe must see the writes this account just made (read-your-writes).
+    const db = primaryDb(env);
 
     // Keep the review queue tidy: at most a handful of works awaiting review.
-    const pending = await env.DB
+    const pending = await db
       .prepare("SELECT COUNT(*) AS n FROM works WHERE username = ?1 AND status = 'pending'")
       .bind(user.username)
       .first();
@@ -197,7 +205,7 @@ export async function onRequestPost({ request, env }) {
     const base = slugifyTitle(title);
     let id = base;
     for (let n = 2; n <= MAX_ID_TRIES; n += 1) {
-      const clash = await env.DB.prepare("SELECT 1 FROM works WHERE id = ?1 LIMIT 1")
+      const clash = await db.prepare("SELECT 1 FROM works WHERE id = ?1 LIMIT 1")
         .bind(id)
         .first();
       if (!clash) break;
@@ -205,7 +213,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     const createdAt = new Date().toISOString();
-    await env.DB
+    await db
       .prepare(
         `INSERT INTO works
            (id, username, title, tagline, kind, category, icon, gradient, status, created_at,
@@ -263,7 +271,11 @@ export async function onRequestGet({ env }) {
   }
   try {
     await ensureProfileSchema(env);
-    const res = await env.DB.prepare(
+    // Viewer hot path — unconstrained D1 session, so an enabled read replica
+    // serves it instead of the primary. Works approved a moment ago appear
+    // here within a heartbeat (replication lag is sub-second in practice).
+    const db = viewerDb(env);
+    const res = await db.prepare(
       `SELECT w.id, w.title, w.tagline, w.description, w.kind, w.category, w.type, w.platform,
               w.icon, w.gradient, w.repo_url, w.repo_owner, w.repo_name, w.download_url,
               w.images, w.created_at,

@@ -28,6 +28,7 @@ import {
   getSessionUser,
   githubTokenKey,
   json,
+  primaryDb,
 } from "./_shared.js";
 
 function profilePayload(row) {
@@ -87,16 +88,19 @@ export async function onRequestPost({ request, env }) {
   // GitHub authorization starts a clean account afterwards.
   if (action === "delete-account") {
     const username = user.username;
+    // Primary-pinned: the deletion must land atomically and be reflected in
+    // any read that immediately follows.
+    const db = primaryDb(env);
     try {
-      await env.DB.batch([
-        env.DB
+      await db.batch([
+        db
           .prepare(
             "DELETE FROM work_stats_daily WHERE work_id IN (SELECT id FROM works WHERE username = ?1)"
           )
           .bind(username),
-        env.DB.prepare("DELETE FROM works WHERE username = ?1").bind(username),
-        env.DB.prepare("DELETE FROM sessions WHERE username = ?1").bind(username),
-        env.DB.prepare("DELETE FROM users WHERE username = ?1").bind(username),
+        db.prepare("DELETE FROM works WHERE username = ?1").bind(username),
+        db.prepare("DELETE FROM sessions WHERE username = ?1").bind(username),
+        db.prepare("DELETE FROM users WHERE username = ?1").bind(username),
       ]);
     } catch (err) {
       console.error(`profile: delete account failed: ${err && err.message}`);

@@ -1,4 +1,4 @@
-import { ensureProfileSchema, json } from "./_shared.js";
+import { ensureProfileSchema, json, primaryDb } from "./_shared.js";
 
 /**
  * POST /api/track
@@ -40,9 +40,12 @@ export async function onRequestPost({ request, env }) {
 
   try {
     await ensureProfileSchema(env);
+    // Primary-pinned: the existence check must see a work approved moments
+    // ago, or the listing's very first views would bounce off with a 404.
+    const db = primaryDb(env);
 
     // Only count stats for works that actually exist.
-    const work = await env.DB
+    const work = await db
       .prepare("SELECT id FROM works WHERE id = ?1 LIMIT 1")
       .bind(workId)
       .first();
@@ -62,7 +65,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     const column = type === "view" ? "views" : "downloads";
-    await env.DB
+    await db
       .prepare(
         `INSERT INTO work_stats_daily (work_id, day, views, downloads)
          VALUES (?1, ?2, ${type === "view" ? 1 : 0}, ${type === "download" ? 1 : 0})

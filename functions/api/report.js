@@ -1,4 +1,4 @@
-import { ensureProfileSchema, generateToken, json, rateLimit, getSessionUser } from "./_shared.js";
+import { ensureProfileSchema, generateToken, json, primaryDb, rateLimit, getSessionUser } from "./_shared.js";
 
 /**
  * POST /api/report — public report intake ("report a work / a developer"),
@@ -63,12 +63,15 @@ export async function onRequestPost({ request, env }) {
 
   try {
     await ensureProfileSchema(env);
+    // Primary-pinned: the target must exist — no ghost reports — and a work
+    // approved seconds ago has to be reportable right away.
+    const db = primaryDb(env);
 
     // The target must exist — no ghost reports.
     const target =
       targetType === "work"
-        ? await env.DB.prepare("SELECT 1 FROM works WHERE id = ?1 LIMIT 1").bind(targetId).first()
-        : await env.DB.prepare("SELECT 1 FROM users WHERE username = ?1 LIMIT 1").bind(targetId).first();
+        ? await db.prepare("SELECT 1 FROM works WHERE id = ?1 LIMIT 1").bind(targetId).first()
+        : await db.prepare("SELECT 1 FROM users WHERE username = ?1 LIMIT 1").bind(targetId).first();
     if (!target) {
       return json({ error: "We couldn't find that target on Orthotopy." }, 404);
     }
@@ -78,7 +81,7 @@ export async function onRequestPost({ request, env }) {
     if (user?.username) reporter = String(user.username);
 
     const id = `rep_${generateToken().slice(0, 20)}`;
-    await env.DB
+    await db
       .prepare(
         `INSERT INTO user_reports (id, target_type, target_id, reporter, contact, reason, details, status, admin_note, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', '', ?8)`

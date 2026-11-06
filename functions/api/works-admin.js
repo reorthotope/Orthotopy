@@ -1,4 +1,4 @@
-import { ensureProfileSchema, json } from "./_shared.js";
+import { ensureProfileSchema, json, primaryDb } from "./_shared.js";
 import { repoImageUrl } from "./_gh-repo.js";
 
 /**
@@ -60,9 +60,12 @@ export async function onRequestPost({ request, env }) {
 
   try {
     await ensureProfileSchema(env);
+    // Primary-pinned: the admin's approve/reject must be visible to the very
+    // next list call they make.
+    const db = primaryDb(env);
 
     if (action === "list") {
-      const res = await env.DB.prepare(
+      const res = await db.prepare(
         `SELECT id, username, title, type, platform, description, repo_url, repo_owner, repo_name, download_url, images, created_at
          FROM works WHERE status = 'pending'
          ORDER BY created_at ASC, id ASC LIMIT 100`
@@ -99,7 +102,7 @@ export async function onRequestPost({ request, env }) {
         return json({ error: "Missing work id." }, 400);
       }
       const status = action === "approve" ? "approved" : "rejected";
-      const result = await env.DB
+      const result = await db
         .prepare("UPDATE works SET status = ?1, reviewed_at = ?2 WHERE id = ?3 AND status = 'pending'")
         .bind(status, new Date().toISOString(), id)
         .run();

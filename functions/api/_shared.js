@@ -67,6 +67,52 @@ export function generateToken() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// --- D1 read replication (Sessions API) ------------------------------------
+//
+// The production database runs with D1 read replication enabled (dashboard:
+// D1 → database → Settings → Enable Read Replication; or REST API:
+// PUT /accounts/{id}/d1/database/{db_id} {"read_replication":{"mode":"auto"}}).
+// Writes always execute on the primary; unconstrained reads may be served by
+// the nearest read replica, which keeps replica traffic off the primary and
+// serves viewers from the closest region.
+//
+// Two helpers pick the routing per endpoint:
+//   primaryDb(env) — every read in the request is pinned to the primary
+//     (read-your-writes). Used for anything auth- or account-related, where
+//     a replica a few hundred ms behind would surface as "my fresh session
+//     doesn't exist" or "the work I just published is missing".
+//   viewerDb(env)  — unconstrained session; reads may come from a replica.
+//     Used for the public viewer reads (catalog feed) where a second of
+//     eventual consistency is invisible.
+// With replication disabled both behave exactly like env.DB — so the code
+// is safe before and after the feature is switched on, and in local dev
+// (miniflare implements withSession as a pass-through; served_by_* are
+// undefined there).
+
+/** D1 session pinned to the primary for read-your-writes consistency. */
+export function primaryDb(env) {
+  if (env?.DB && typeof env.DB.withSession === "function") {
+    try {
+      return env.DB.withSession("first-primary");
+    } catch {
+      // Older binding without the Sessions API — plain database object.
+    }
+  }
+  return env.DB;
+}
+
+/** D1 session allowed to serve reads from the nearest read replica. */
+export function viewerDb(env) {
+  if (env?.DB && typeof env.DB.withSession === "function") {
+    try {
+      return env.DB.withSession("first-unconstrained");
+    } catch {
+      // Older binding without the Sessions API — plain database object.
+    }
+  }
+  return env.DB;
+}
+
 /** Best-effort client IP for per-IP KV rate limits and dedupe windows. */
 export function clientIp(request) {
   const raw =
@@ -129,13 +175,19 @@ export async function createSession(env, username) {
   return token;
 }
 
-/** Resolves the Authorization: Bearer header to a users row, or null. */
+/**
+ * Resolves the Authorization: Bearer header to a users row, or null.
+ *
+ * Pinned to the primary: the session row may have been written seconds ago
+ * by the OAuth callback, and a stale replica must never 401 a developer
+ * who just signed in.
+ */
 export async function getSessionUser(env, request) {
   const header = request.headers.get("authorization") || "";
   const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
   if (!match || !env.DB || typeof env.DB.prepare !== "function") return null;
   try {
-    return await env.DB.prepare(
+    return await primaryDb(env).prepare(
       `SELECT u.username, u.github_id, u.github_name, u.github_email,
               u.starred_at, u.publish_access, u.created_at, u.last_login_at
        FROM sessions s JOIN users u ON u.username = s.username
@@ -159,6 +211,10 @@ export async function getSessionUser(env, request) {
  * chosen names — nothing to leak. Databases from the signup/sign-in era are
  * rebuilt in place: password/nickname columns are dropped for good and
  * GitHub-linked accounts keep working under their GitHub login.
+ *
+ * Schema probes read through the primary-pinned session so a lagging read
+ * replica can never report a column/table as missing and trigger a
+ * redundant (or misleading) migration branch.
  */
 
 // D1's client API has no reliable PRAGMA, so the table shape is detected by
@@ -169,7 +225,7 @@ let schemaReady = false;
 /** false when the works table is missing the column, true when selectable. */
 async function probeWorksColumn(env, column) {
   try {
-    await env.DB.prepare(`SELECT ${column} FROM works LIMIT 1`).all();
+    await primaryDb(env).prepare(`SELECT ${column} FROM works LIMIT 1`).all();
     return true;
   } catch {
     return false;
@@ -179,7 +235,7 @@ async function probeWorksColumn(env, column) {
 /** true: column selectable; "no-table": users table missing; false: no column. */
 async function probeColumn(env, column) {
   try {
-    await env.DB.prepare(`SELECT ${column} FROM users LIMIT 1`).all();
+    await primaryDb(env).prepare(`SELECT ${column} FROM users LIMIT 1`).all();
     return true;
   } catch (err) {
     const msg = String((err && err.message) || err);
