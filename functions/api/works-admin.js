@@ -63,7 +63,7 @@ export async function onRequestPost({ request, env }) {
 
     if (action === "list") {
       const res = await env.DB.prepare(
-        `SELECT id, username, title, type, platform, description, repo_url, download_url, images, created_at
+        `SELECT id, username, title, type, platform, description, repo_url, repo_owner, repo_name, download_url, images, created_at
          FROM works WHERE status = 'pending'
          ORDER BY created_at ASC, id ASC LIMIT 100`
       ).all();

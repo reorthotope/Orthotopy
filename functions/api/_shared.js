@@ -1,7 +1,7 @@
 /**
  * Shared helpers for the Orthotopy Pages Functions.
  * Imported by functions/api/session.js, profile.js, works.js, my-works.js,
- * track.js and github/callback.js.
+ * track.js, apex.js, support.js, report.js and github/callback.js.
  *
  * Auth model (OAuth-only): there is no signup, no sign-in form and no
  * password anywhere in the project. A developer joins by authorizing their
@@ -65,6 +65,43 @@ export function json(data, status = 200) {
 export function generateToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Best-effort client IP for per-IP KV rate limits and dedupe windows. */
+export function clientIp(request) {
+  const raw =
+    String(request?.headers?.get("cf-connecting-ip") ?? "") ||
+    String(request?.headers?.get("x-forwarded-for") ?? "");
+  return raw.split(",")[0].trim() || "unknown";
+}
+
+/**
+ * Fixed-window per-IP rate limit backed by the CODES KV namespace.
+ * Returns true when the call is allowed. Without KV every call is allowed —
+ * the endpoints stay functional, just unthrottled.
+ */
+export async function rateLimit(env, request, bucket, max, windowSeconds) {
+  if (
+    !env?.CODES ||
+    typeof env.CODES.get !== "function" ||
+    typeof env.CODES.put !== "function"
+  ) {
+    return true;
+  }
+  const key = `rl:${bucket}:${clientIp(request)}`;
+  let current = 0;
+  try {
+    current = Number((await env.CODES.get(key)) ?? 0);
+  } catch {
+    return true;
+  }
+  if (Number.isFinite(current) && current >= max) return false;
+  try {
+    await env.CODES.put(key, String(current + 1), { expirationTtl: windowSeconds });
+  } catch {
+    // A lost increment only weakens the throttle — never block the request.
+  }
+  return true;
 }
 
 // --- sessions: opaque bearer tokens so profile endpoints know the caller ---
@@ -239,6 +276,49 @@ export async function ensureProfileSchema(env) {
       downloads INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (work_id, day)
     )`
+  ).run();
+
+  // Support tickets — public intake via POST /api/support, triaged in the
+  // /apex console (status open → answered → closed, optional priority and
+  // an admin note that stays internal).
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS support_tickets (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL DEFAULT '',
+      contact TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      priority TEXT NOT NULL DEFAULT 'normal',
+      admin_note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status)"
+  ).run();
+
+  // User reports — public intake via POST /api/report (a work or a user,
+  // with a reason), triaged in /apex. Resolving can remove the reported
+  // work from the catalog (status 'rejected').
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS user_reports (
+      id TEXT PRIMARY KEY,
+      target_type TEXT NOT NULL DEFAULT 'work',
+      target_id TEXT NOT NULL,
+      reporter TEXT NOT NULL DEFAULT '',
+      contact TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT 'other',
+      details TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      admin_note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status)"
   ).run();
 
   const tableState = await probeColumn(env, "username");
