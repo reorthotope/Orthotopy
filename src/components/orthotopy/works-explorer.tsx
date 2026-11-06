@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, Github, PackageOpen, Sparkles } from "lucide-react";
+import { Download, ExternalLink, Flag, Github, PackageOpen, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ReportWorkDialog } from "@/components/orthotopy/report-dialog";
 import { ICONS, type Work } from "@/lib/works";
 import { cn } from "@/lib/utils";
 
@@ -145,7 +146,9 @@ export function WorkCard({ work, onView }: { work: Work; onView: (work: Work) =>
  * The work's public detail view. Screenshots come straight from the work's
  * GitHub repo (they were detected at publish time and are hotlinked from
  * raw.githubusercontent.com), the description and links round out the page.
- * Opening it counts as the work's view.
+ * Opening it counts as the work's view. The footer carries a Report button
+ * that opens the public report intake — every work on the site is
+ * reportable and reports land in the /apex review queue.
  */
 export function WorkDialog({
   work,
@@ -156,9 +159,16 @@ export function WorkDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [reportOpen, setReportOpen] = useState(false);
+
   useEffect(() => {
     if (open && work) trackWork(work.id, "view");
   }, [open, work]);
+
+  // Closing the parent detail view also tears down the report dialog.
+  useEffect(() => {
+    if (!open) setReportOpen(false);
+  }, [open]);
 
   if (!work) return null;
   const images = work.imageUrls ?? [];
@@ -224,8 +234,21 @@ export function WorkDialog({
               ? "Download opens the release file — it starts downloading straight away."
               : "No download link was provided for this work yet."}
           </span>
-          {work.downloadUrl ? <DownloadButton work={work} size="default" /> : null}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => setReportOpen(true)}
+            >
+              <Flag className="size-4" aria-hidden="true" />
+              Report
+            </Button>
+            {work.downloadUrl ? <DownloadButton work={work} size="default" /> : null}
+          </div>
         </div>
+
+        <ReportWorkDialog work={work} open={reportOpen} onOpenChange={setReportOpen} />
       </DialogContent>
     </Dialog>
   );
