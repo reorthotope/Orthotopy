@@ -3,13 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  CircleDollarSign,
   Download,
   Eye,
   Github,
+  HandCoins,
   Loader2,
   Package,
+  Receipt,
   RefreshCw,
   Rocket,
+  TrendingUp,
 } from "lucide-react";
 import {
   CartesianGrid,
@@ -53,6 +57,10 @@ import {
  * recorded as 'pending' by POST /api/works the moment the publish form is
  * sent, and POST /api/track grows the graphs as the storefront's View /
  * Download buttons are used.
+ *
+ * The page closes with a "Monetization" placeholder card (amber Coming
+ * soon tag) — parked UI for earnings tracking and payouts; nothing is
+ * wired up yet.
  */
 
 interface MyWork {
@@ -573,6 +581,62 @@ export function DeveloperDashboard() {
             Live counts — each work keeps its color across the list and both graphs.
           </p>
         ) : null}
+
+        {/* Monetization — placeholder card, nothing wired up */}
+        <div className="mt-8 rounded-2xl border border-dashed bg-card/40 p-6 sm:p-10">
+          <div className="text-center">
+            <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-amber-500/10">
+              <CircleDollarSign
+                className="size-7 text-amber-600 dark:text-amber-400"
+                aria-hidden="true"
+              />
+            </span>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <h2 className="text-base font-semibold">Monetization</h2>
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                Coming soon
+              </span>
+            </div>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+              Earn from your works — day-by-day earnings tracking and payouts
+              are on the roadmap. Nothing here is active yet.
+            </p>
+          </div>
+
+          <div className="mt-6 space-y-3">
+            {[
+              {
+                icon: TrendingUp,
+                title: "Earnings overview",
+                text: "See what each work earns per day, at a glance.",
+              },
+              {
+                icon: HandCoins,
+                title: "Payouts",
+                text: "Cash out your balance whenever you're ready.",
+              },
+              {
+                icon: Receipt,
+                title: "Statements",
+                text: "Downloadable earnings statements for your records.",
+              },
+            ].map((teaser) => (
+              <div
+                key={teaser.title}
+                className="flex items-start gap-3 rounded-xl border bg-card/50 p-4 opacity-70"
+              >
+                <teaser.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{teaser.title}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{teaser.text}</p>
+                </div>
+                <span className="ml-auto shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  planned
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
