@@ -62,6 +62,14 @@ export const IMAGE_STEMS = [
 export const MAX_IMAGES = 10;
 export const IMAGE_NAMING_HINT = "img.png, img1.png … img9.png (.png or .jpeg)";
 
+/**
+ * Logo convention: the work's tile image comes straight from the repo too.
+ * Put a logo.png (or icon.png) in the repo root and the publish flow picks
+ * it up automatically — no upload anywhere. Without one, the storefront
+ * falls back to a generated type icon.
+ */
+export const LOGO_NAMING_HINT = "logo.png or icon.png (.png or .jpeg)";
+
 export interface Work {
   id: string;
   title: string;
@@ -78,6 +86,8 @@ export interface Work {
   repoUrl?: string;
   downloadUrl?: string;
   imageUrls?: string[];
+  /** Repo-root logo (logo.png / icon.png) served from the developer's repo. */
+  logoUrl?: string;
 }
 
 /**

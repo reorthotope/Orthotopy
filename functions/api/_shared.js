@@ -312,6 +312,7 @@ export async function ensureProfileSchema(env) {
     ["repo_name", "ALTER TABLE works ADD COLUMN repo_name TEXT NOT NULL DEFAULT ''"],
     ["download_url", "ALTER TABLE works ADD COLUMN download_url TEXT NOT NULL DEFAULT ''"],
     ["images", "ALTER TABLE works ADD COLUMN images TEXT NOT NULL DEFAULT '[]'"],
+    ["logo_file", "ALTER TABLE works ADD COLUMN logo_file TEXT NOT NULL DEFAULT ''"],
     ["reviewed_at", "ALTER TABLE works ADD COLUMN reviewed_at TEXT"],
   ]) {
     if ((await probeWorksColumn(env, col)) === true) continue;

@@ -43,6 +43,42 @@ function WorkIcon({ iconKey }: { iconKey: string }) {
 }
 
 /**
+ * The work's tile: the repo-hosted logo (logo.png / icon.png detected at
+ * publish time) when the work has one, otherwise the generated gradient
+ * tile with a type icon. If the logo ever disappears from the repo, the
+ * broken image falls back to the generated tile instead of a broken icon.
+ */
+export function WorkTile({ work, large = false }: { work: Work; large?: boolean }) {
+  const [logoBroken, setLogoBroken] = useState(false);
+  const size = large ? "size-14" : "size-12";
+  useEffect(() => {
+    setLogoBroken(false);
+  }, [work.logoUrl]);
+  if (work.logoUrl && !logoBroken) {
+    return (
+      <img
+        src={work.logoUrl}
+        alt={`${work.title} logo`}
+        loading="lazy"
+        onError={() => setLogoBroken(true)}
+        className={`${size} shrink-0 rounded-xl border bg-card object-cover shadow-sm`}
+      />
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm",
+        size,
+        work.gradient
+      )}
+    >
+      <WorkIcon iconKey={work.icon} />
+    </span>
+  );
+}
+
+/**
  * Fire-and-forget stats beacon. The server (/api/track) dedupes per
  * work+type+IP per hour, so refreshes don't inflate the dashboard graphs.
  */
@@ -120,14 +156,7 @@ export function WorkCard({ work, onView }: { work: Work; onView: (work: Work) =>
         </div>
       ) : null}
       <CardHeader className="flex-row items-start gap-3 space-y-0">
-        <span
-          className={cn(
-            "flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm",
-            work.gradient
-          )}
-        >
-          <WorkIcon iconKey={work.icon} />
-        </span>
+        <WorkTile work={work} />
         <div className="min-w-0">
           <CardTitle className="truncate text-base">{work.title}</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">by {work.creator}</p>
@@ -203,11 +232,16 @@ export function WorkDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-left">{work.title}</DialogTitle>
-          <DialogDescription className="text-left">
-            {work.type ? `${work.type}` : work.category}
-            {work.platform ? ` · ${work.platform}` : ""} · by {work.creator}
-          </DialogDescription>
+          <div className="flex items-center gap-3">
+            <WorkTile work={work} large />
+            <div className="min-w-0">
+              <DialogTitle className="text-left">{work.title}</DialogTitle>
+              <DialogDescription className="text-left">
+                {work.type ? `${work.type}` : work.category}
+                {work.platform ? ` · ${work.platform}` : ""} · by {work.creator}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         {images.length > 0 ? (

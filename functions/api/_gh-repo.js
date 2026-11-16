@@ -27,6 +27,14 @@ export const IMAGE_EXTENSIONS = [".png", ".jpeg", ".jpg"];
 export const MAX_IMAGES = 10;
 
 /**
+ * Logo naming convention: the work's own logo/icon lives in the repo root as
+ * logo.png (preferred) or icon.png (.png or .jpeg/.jpg accepted). When the
+ * publish flow finds one, the storefront shows it as the work's tile image
+ * instead of the generated type icon.
+ */
+export const LOGO_STEMS = ["logo", "icon"];
+
+/**
  * Parses a GitHub repo link into { owner, repo }. Accepts
  * github.com/<owner>/<repo> with or without scheme, trailing .git,
  * extra path segments (/tree/…, /releases/…) and query strings.
@@ -102,31 +110,31 @@ export async function fetchRepoMeta(env, token, owner, repo) {
 }
 
 /**
- * Detects the screenshot files in a repo's root.
- *
- * Primary path: GET /repos/{o}/{r}/contents with the developer's OAuth
- * token — one request, lists the whole root. Fallback (no token or the
- * contents call was rate-limited): parallel HEAD probes against
- * raw.githubusercontent.com for every candidate filename — the raw CDN
- * serves public repos without authentication.
- *
- * Returns the matching filenames in display order, e.g.
- * ["img.png", "img1.png", "img2.png"].
+ * Detects the screenshot files AND the logo file in a repo's root with one
+ * contents listing (raw HEAD probes as the fallback).
+ *   { images: ["img.png", "img1.png"], logo: "logo.png" }
+ * logo is "" when the repo root has no logo/icon file.
  */
-export async function detectRepoImages(env, token, owner, repo) {
+export async function detectRepoArt(env, token, owner, repo) {
   const url = `${API_BASE(env)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`;
   try {
     const res = await fetch(url, { headers: ghHeaders(token) });
     if (res.ok) {
       const listing = await res.json().catch(() => null);
       if (Array.isArray(listing)) {
-        return pickImageFiles(listing.map((entry) => String(entry?.name ?? "")));
+        const names = listing.map((entry) => String(entry?.name ?? ""));
+        return { images: pickImageFiles(names), logo: pickLogoFile(names) };
       }
     }
   } catch {
     // fall through to raw probes
   }
-  return probeRepoImages(env, owner, repo);
+  return probeRepoArt(env, owner, repo);
+}
+
+/** Screenshot-only convenience wrapper around detectRepoArt. */
+export async function detectRepoImages(env, token, owner, repo) {
+  return (await detectRepoArt(env, token, owner, repo)).images;
 }
 
 /** Filters a root listing down to the img / imgN screenshot files, in order. */
@@ -154,14 +162,40 @@ export function pickImageFiles(names) {
     .map(([, name]) => name);
 }
 
-/** Anonymous HEAD probes against the raw CDN for every candidate filename. */
-async function probeRepoImages(env, owner, repo) {
-  const candidates = [];
-  for (const stem of IMAGE_STEMS) {
+/** Picks the logo/icon file from a root listing: logo.png first, then
+ * icon.png, .png before .jpeg/.jpg; exact lowercase spellings win over
+ * case variants (LOGO.PNG). Returns "" when nothing matches. */
+export function pickLogoFile(names) {
+  const wanted = new Map(); // lowercase candidate name -> priority index
+  let priority = 0;
+  for (const stem of LOGO_STEMS) {
     for (const ext of IMAGE_EXTENSIONS) {
-      candidates.push(`${stem}${ext}`);
+      wanted.set(`${stem}${ext}`, priority);
+      priority += 1;
     }
   }
+  const present = new Map(); // priority index -> filename found
+  for (const name of names) {
+    const order = wanted.get(name.toLowerCase());
+    if (order === undefined || present.has(order)) continue;
+    present.set(order, name);
+  }
+  // An exact lowercase spelling (logo.png) wins over case variants.
+  for (const name of names) {
+    const order = wanted.get(name);
+    if (order !== undefined) present.set(order, name);
+  }
+  if (present.size === 0) return "";
+  const best = Math.min(...present.keys());
+  return present.get(best);
+}
+
+/** Anonymous HEAD probes against the raw CDN for every candidate filename. */
+async function probeRepoArt(env, owner, repo) {
+  const candidates = [
+    ...IMAGE_STEMS.flatMap((stem) => IMAGE_EXTENSIONS.map((ext) => `${stem}${ext}`)),
+    ...LOGO_STEMS.flatMap((stem) => IMAGE_EXTENSIONS.map((ext) => `${stem}${ext}`)),
+  ];
   const checks = candidates.map(async (file) => {
     try {
       const res = await fetch(repoImageUrl(env, owner, repo, file), {
@@ -174,9 +208,14 @@ async function probeRepoImages(env, owner, repo) {
   });
   const found = await Promise.all(checks);
   const hits = new Set(found.filter(Boolean));
-  return IMAGE_STEMS.flatMap((stem) =>
+  const images = IMAGE_STEMS.flatMap((stem) =>
     IMAGE_EXTENSIONS.map((ext) => `${stem}${ext}`)
   ).filter((file) => hits.has(file));
+  const logo =
+    LOGO_STEMS.flatMap((stem) => IMAGE_EXTENSIONS.map((ext) => `${stem}${ext}`)).find(
+      (file) => hits.has(file)
+    ) ?? "";
+  return { images, logo };
 }
 
 /**

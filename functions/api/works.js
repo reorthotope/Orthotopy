@@ -7,8 +7,7 @@ import {
   viewerDb,
 } from "./_shared.js";
 import {
-  detectRepoImages,
-  fetchLatestRelease,
+  detectRepoArt,
   fetchRepoMeta,
   parseRepoUrl,
   repoImageUrl,
@@ -21,10 +20,11 @@ import {
  * The developer submits the listing directly (no signup, no catalog issue):
  * title, type (Apps / Games / Extensions + platform), description, the
  * work's PUBLIC GitHub repo link and a download link (a GitHub Releases
- * asset URL or any direct download URL). Screenshots are never uploaded —
- * they must already live in the repo root as img.png, img1.png … img9.png
- * (.png or .jpeg/.jpg) and are detected from the repo contents here on the
- * server, so the form can never claim images the repo doesn't have.
+ * asset URL or any direct download URL). Screenshots and the logo are
+ * never uploaded — they must already live in the repo root: screenshots
+ * as img.png, img1.png … img9.png (.png or .jpeg/.jpg) and the logo as
+ * logo.png or icon.png. All are detected from the repo contents here on
+ * the server, so the form can never claim images the repo doesn't have.
  *
  * Every submission lands as status 'pending' — under review — and shows on
  * the developer's dashboard immediately. When the review approves it
@@ -198,9 +198,11 @@ export async function onRequestPost({ request, env }) {
       return json({ error: "The repo must be public to publish it here." }, 400);
     }
 
-    // The server re-detects screenshots from the repo contents — the client's
-    // preview is display-only, this list is what gets stored.
-    const imageFiles = await detectRepoImages(env, token, parsedRepo.owner, parsedRepo.repo);
+    // The server re-detects screenshots and the logo from the repo contents
+    // — the client's preview is display-only, this is what gets stored.
+    const art = await detectRepoArt(env, token, parsedRepo.owner, parsedRepo.repo);
+    const imageFiles = art.images;
+    const logoFile = art.logo;
 
     const base = slugifyTitle(title);
     let id = base;
@@ -217,8 +219,8 @@ export async function onRequestPost({ request, env }) {
       .prepare(
         `INSERT INTO works
            (id, username, title, tagline, kind, category, icon, gradient, status, created_at,
-            description, type, platform, repo_url, repo_owner, repo_name, download_url, images)
-         VALUES (?1, ?2, ?3, ?4, 'Developer', ?5, ?6, ?7, 'pending', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`
+            description, type, platform, repo_url, repo_owner, repo_name, download_url, images, logo_file)
+         VALUES (?1, ?2, ?3, ?4, 'Developer', ?5, ?6, ?7, 'pending', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)`
       )
       .bind(
         id,
@@ -236,7 +238,8 @@ export async function onRequestPost({ request, env }) {
         parsedRepo.owner,
         parsedRepo.repo,
         downloadUrl,
-        JSON.stringify(imageFiles)
+        JSON.stringify(imageFiles),
+        logoFile
       )
       .run();
 
@@ -255,6 +258,10 @@ export async function onRequestPost({ request, env }) {
         imageUrls: imageFiles.map((file) =>
           repoImageUrl(env, parsedRepo.owner, parsedRepo.repo, file)
         ),
+        logo: logoFile,
+        logoUrl: logoFile
+          ? repoImageUrl(env, parsedRepo.owner, parsedRepo.repo, logoFile)
+          : "",
       },
     });
   } catch (err) {
@@ -278,7 +285,7 @@ export async function onRequestGet({ env }) {
     const res = await db.prepare(
       `SELECT w.id, w.title, w.tagline, w.description, w.kind, w.category, w.type, w.platform,
               w.icon, w.gradient, w.repo_url, w.repo_owner, w.repo_name, w.download_url,
-              w.images, w.created_at,
+              w.images, w.logo_file, w.created_at,
               COALESCE(NULLIF(u.github_name, ''), w.username) AS creator
        FROM works w LEFT JOIN users u ON u.username = w.username
        WHERE w.status = 'approved'
@@ -311,6 +318,10 @@ export async function onRequestGet({ env }) {
           owner && repo
             ? files.map((file) => repoImageUrl(env, owner, repo, file))
             : [],
+        logoUrl:
+          r.logo_file && owner && repo
+            ? repoImageUrl(env, owner, repo, String(r.logo_file))
+            : "",
         createdAt: r.created_at ? String(r.created_at) : null,
       };
     });

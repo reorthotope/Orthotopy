@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import {
   IMAGE_NAMING_HINT,
+  LOGO_NAMING_HINT,
   TYPE_PLATFORMS,
   WORK_TYPES,
   parseGithubRepoUrl,
@@ -64,6 +65,9 @@ interface ScanResult {
   description: string;
   images: string[];
   imageUrls: string[];
+  /** Repo-root logo (logo.png / icon.png) — becomes the work's tile image. */
+  logo?: string;
+  logoUrl?: string;
   suggestedDownloadUrl: string;
 }
 
@@ -187,6 +191,8 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
             description: data.description,
             images: data.images ?? [],
             imageUrls: data.imageUrls ?? [],
+            logo: data.logo ?? "",
+            logoUrl: data.logoUrl ?? "",
             suggestedDownloadUrl: data.suggestedDownloadUrl ?? "",
           });
           setScanState("ok");
@@ -555,6 +561,29 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
                     images max.
                   </p>
                 )}
+                <div className="flex items-center gap-3 border-t pt-3">
+                  {scanState === "ok" && scan?.logoUrl ? (
+                    <>
+                      <img
+                        src={scan.logoUrl}
+                        alt={`${scan.repo} logo`}
+                        loading="lazy"
+                        className="size-12 rounded-xl border object-cover"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        <span className="font-medium text-foreground">Logo found:</span>{" "}
+                        {scan.logo} from your repo — it becomes the tile image
+                        on your listing, no upload needed.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      Want your own logo on the listing? Add{" "}
+                      {LOGO_NAMING_HINT} to the repo root — it&apos;s picked up
+                      automatically. Otherwise a type icon is used.
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="grid gap-2">

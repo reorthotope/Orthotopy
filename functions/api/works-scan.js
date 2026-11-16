@@ -1,6 +1,6 @@
 import { getSessionUser, githubTokenKey, json } from "./_shared.js";
 import {
-  detectRepoImages,
+  detectRepoArt,
   fetchLatestRelease,
   fetchRepoMeta,
   parseRepoUrl,
@@ -19,6 +19,8 @@ import {
  *   - whether the repo exists AND is public (publishing requires public),
  *   - the screenshot files found in the repo root (img.png, img1.png …
  *     img9.png, .png or .jpeg/.jpg) with their ready-to-serve raw URLs,
+ *   - the logo file (logo.png or icon.png) with its raw URL, so the form
+ *     can preview the tile image the storefront will show,
  *   - a suggested download link from the repo's latest GitHub release
  *     (first release asset — browsers auto-download it), prefilled only
  *     when the developer hasn't typed one.
@@ -68,8 +70,8 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "The repo must be public to publish it here." }, 403);
   }
 
-  const [imageFiles, releaseUrl] = await Promise.all([
-    detectRepoImages(env, token, parsed.owner, parsed.repo),
+  const [art, releaseUrl] = await Promise.all([
+    detectRepoArt(env, token, parsed.owner, parsed.repo),
     fetchLatestRelease(env, token, parsed.owner, parsed.repo),
   ]);
 
@@ -79,8 +81,10 @@ export async function onRequestPost({ request, env }) {
     repo: parsed.repo,
     repoUrl: repoWebUrl(parsed.owner, parsed.repo),
     description: meta.description || "",
-    images: imageFiles,
-    imageUrls: imageFiles.map((file) => repoImageUrl(env, parsed.owner, parsed.repo, file)),
+    images: art.images,
+    imageUrls: art.images.map((file) => repoImageUrl(env, parsed.owner, parsed.repo, file)),
+    logo: art.logo,
+    logoUrl: art.logo ? repoImageUrl(env, parsed.owner, parsed.repo, art.logo) : "",
     suggestedDownloadUrl: releaseUrl || "",
   });
 }

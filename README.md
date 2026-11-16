@@ -25,6 +25,10 @@ offline support.
   the review queue as `pending` and an admin approves them from `/apex`.
 - Each work carries its public GitHub repo link, so every listing shows a
   **Source** link straight to the code.
+- **Logos & screenshots come from the repo itself** — screenshots as
+  `img.png, img1.png … img9.png` and the tile logo as `logo.png` or
+  `icon.png` in the repo root. Both are detected at publish time and
+  hotlinked from raw.githubusercontent.com; nothing is ever uploaded.
 - Redeploys are automatic when the repo changes (see hosting below).
 
 ## PWA

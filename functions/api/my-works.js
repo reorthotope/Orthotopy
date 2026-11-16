@@ -4,6 +4,7 @@ import {
   json,
   primaryDb,
 } from "./_shared.js";
+import { repoImageUrl } from "./_gh-repo.js";
 
 /**
  * GET /api/my-works
@@ -52,7 +53,8 @@ export async function onRequestGet({ env, request }) {
     const worksRes = await db
       .prepare(
         `SELECT id, title, tagline, description, kind, category, type, platform,
-                icon, gradient, status, repo_url, download_url, images, created_at
+                icon, gradient, status, repo_url, repo_owner, repo_name, download_url,
+                images, logo_file, created_at
          FROM works WHERE username = ?1 ORDER BY created_at DESC, id ASC`
       )
       .bind(user.username)
@@ -73,6 +75,10 @@ export async function onRequestGet({ env, request }) {
         repoUrl: r.repo_url ? String(r.repo_url) : "",
         downloadUrl: r.download_url ? String(r.download_url) : "",
         images: parseImagesColumn(r.images),
+        logoUrl:
+          r.logo_file && r.repo_owner && r.repo_name
+            ? repoImageUrl(env, String(r.repo_owner), String(r.repo_name), String(r.logo_file))
+            : "",
         createdAt: r.created_at ? String(r.created_at) : null,
       })
     );
