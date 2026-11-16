@@ -3,7 +3,9 @@ import {
   getSessionUser,
   githubTokenKey,
   json,
+  modErrorResponse,
   primaryDb,
+  resolveModState,
   viewerDb,
 } from "./_shared.js";
 import {
@@ -128,6 +130,12 @@ export async function onRequestPost({ request, env }) {
       { error: "Publishing unlocks with your verified GitHub identity — sign in with GitHub once more." },
       403
     );
+  }
+  // Suspended / banned accounts cannot publish (suspended keeps their
+  // existing live works, banned ones were already pulled back to review).
+  const mod = resolveModState(user);
+  if (mod.blocked) {
+    return modErrorResponse(mod);
   }
   if (!env.DB || typeof env.DB.prepare !== "function") {
     return json({ error: "Database not ready — please try again in a moment." }, 500);
@@ -278,6 +286,37 @@ export async function onRequestGet({ env }) {
   }
   try {
     await ensureProfileSchema(env);
+    // Work suspensions are temporary (apex sets a date+time): any one that
+    // has run out auto-restores to live here. Lazy — no cron needed; the
+    // first catalog read after the deadline flips the rows back on the
+    // primary, then the viewer query below serves the fresh feed.
+    try {
+      const nowIso = new Date().toISOString();
+      const expired = await primaryDb(env)
+        .prepare(
+          `SELECT id FROM works
+           WHERE status = 'suspended'
+             AND suspended_until IS NOT NULL AND suspended_until != ''
+             AND suspended_until <= ?1`
+        )
+        .bind(nowIso)
+        .all();
+      if ((expired?.results ?? []).length > 0) {
+        await primaryDb(env)
+          .prepare(
+            `UPDATE works
+             SET status = 'approved', suspended_until = '', mod_note = ''
+             WHERE status = 'suspended'
+               AND suspended_until IS NOT NULL AND suspended_until != ''
+               AND suspended_until <= ?1`
+          )
+          .bind(nowIso)
+          .run();
+      }
+    } catch (restoreErr) {
+      // A failed restore pass must never take the feed down.
+      console.error(`works: suspend restore failed: ${restoreErr && restoreErr.message}`);
+    }
     // Viewer hot path — unconstrained D1 session, so an enabled read replica
     // serves it instead of the primary. Works approved a moment ago appear
     // here within a heartbeat (replication lag is sub-second in practice).

@@ -31,6 +31,37 @@ offline support.
   hotlinked from raw.githubusercontent.com; nothing is ever uploaded.
 - Redeploys are automatic when the repo changes (see hosting below).
 
+## Work management & moderation
+
+- **Developer dashboard** (`/dashboard`): every live work has **Update** and
+  **Remove** buttons. *Update* files an **update request** (new title,
+  description, download link) — the live listing keeps running unchanged
+  until the review approves it; *Remove* deletes the work and its stats for
+  good. Moderation states surface as badges: Pending review, Live, Taken
+  down, Suspended (with the auto-restore date), Banned, plus the review's
+  note.
+- **Apex "All works"** (`/apex`): the whole catalog with per-work **view &
+  download counts** (shown here only), status filters (live / under review /
+  taken down / suspended / banned / rejected), type filters (apps / games /
+  extensions / others) and the actions **Suspend** (temporary — hidden until
+  a date+time you set, then auto-restored on the next catalog read),
+  **Takedown** / **Ban** (hidden for good, restorable by hand), **Delete**
+  (row erased), **Restore**, and **Approve / Reject update request**.
+- **Developer CRM**: accounts can be **suspended** (temporary date+time,
+  auto-ends; works stay live) or **banned** (indefinite; live works go back
+  into the review queue) on top of delete. Suspended/banned developers can
+  still open their dashboard — it shows the reason, the end of a suspension
+  and an **Appeal** button instead of works data.
+- **Appeals & support chats**: every ticket is a private thread with a
+  unique link `/support/appeal-<username><8 random digits>` (e.g.
+  `/support/appeal-pixelwork48291057`) — a new link is minted per ticket and
+  never repeats. The chat is **end-to-end encrypted in the browser**
+  (AES-256-GCM, key derived from the ticket's own link); D1 stores only
+  ciphertext, and the server never sees plaintext. Access control: only the
+  ticket's owner (their session) and staff (the apex console session) can
+  read or post — anyone else gets a 404 both on the API and the page shell.
+  Staff answers the same chat from the apex "Appeals & chats" panel.
+
 ## PWA
 
 - **Installable** — web app manifest (`public/manifest.webmanifest`) with branded

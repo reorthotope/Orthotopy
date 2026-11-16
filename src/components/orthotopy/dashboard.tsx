@@ -8,12 +8,16 @@ import {
   Eye,
   Github,
   HandCoins,
+  LifeBuoy,
   Loader2,
   Package,
+  Pencil,
   Receipt,
   RefreshCw,
   Rocket,
+  ShieldAlert,
   TrendingUp,
+  Trash2,
 } from "lucide-react";
 import {
   CartesianGrid,
@@ -25,8 +29,30 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { usePublish } from "./site-shell";
+import { createTicket, listMyThreads, type SupportThread } from "./support-thread";
 import {
   clearAuth,
   exchangeSessionCode,
@@ -73,6 +99,18 @@ interface MyWork {
   type: string;
   platform: string;
   status: string;
+  /** Why the work was taken down / suspended / banned (from apex). */
+  modNote: string;
+  /** When a work suspension auto-ends (ISO), or null. */
+  suspendedUntil: string | null;
+  /** Pending "update request" — the live listing keeps running until the
+   * review approves or rejects this edit. */
+  pendingUpdate: {
+    title: string;
+    description: string;
+    downloadUrl: string;
+    requestedAt: string;
+  } | null;
   repoUrl: string;
   downloadUrl: string;
   images: string[];
@@ -111,6 +149,31 @@ function workColor(id: string): string {
 
 type DashboardState = "idle" | "loading" | "ok" | "error";
 
+function isValidDownloadUrl(raw: string): boolean {
+  const value = raw.trim();
+  if (!value || value.length > 600 || /\s/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function fmtUntil(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export function DeveloperDashboard() {
   const router = useRouter();
   const publish = usePublish();
@@ -127,6 +190,20 @@ export function DeveloperDashboard() {
   // Dashboard data (works + stats)
   const [data, setData] = useState<DashboardData | null>(null);
   const [dataState, setDataState] = useState<DashboardState>("idle");
+
+  // Work self-management (update request + remove)
+  const [updateWork, setUpdateWork] = useState<MyWork | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateForm, setUpdateForm] = useState({ title: "", description: "", downloadUrl: "" });
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [removeWork, setRemoveWork] = useState<MyWork | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+
+  // Appeal / support tickets
+  const [tickets, setTickets] = useState<SupportThread[]>([]);
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const [ticketError, setTicketError] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async (token: string) => {
     setDataState("loading");
@@ -197,6 +274,16 @@ export function DeveloperDashboard() {
     });
   }, [ready, auth, loadProfile, loadDashboard]);
 
+  // The developer's own support tickets (linked chats).
+  const loadTickets = useCallback(async (token: string) => {
+    const result = await listMyThreads(token);
+    if (result.ok && result.threads) setTickets(result.threads);
+  }, []);
+
+  useEffect(() => {
+    if (ready && auth?.token && profile?.modState === "ok") void loadTickets(auth.token);
+  }, [ready, auth, profile, loadTickets]);
+
   // A publish that just succeeded (the dialog lives in the site shell)
   // announces itself here so the list and counters update immediately.
   useEffect(() => {
@@ -211,7 +298,109 @@ export function DeveloperDashboard() {
     if (!auth?.token) return;
     const fresh = await loadProfile(auth.token);
     if (fresh) await loadDashboard(auth.token);
-  }, [loadProfile, loadDashboard, auth]);
+    await loadTickets(auth.token);
+  }, [loadProfile, loadDashboard, loadTickets, auth]);
+
+  // ------------------------------------------------- update / remove flows
+  const openUpdateDialog = (work: MyWork) => {
+    setUpdateWork(work);
+    setUpdateForm({
+      title: work.title,
+      description: work.description || work.tagline || "",
+      downloadUrl: work.downloadUrl || "",
+    });
+    setUpdateError(null);
+    setUpdateOpen(true);
+  };
+
+  const submitUpdate = async () => {
+    if (!updateWork || updateBusy || !auth?.token) return;
+    const title = updateForm.title.trim();
+    const description = updateForm.description.trim();
+    const downloadUrl = updateForm.downloadUrl.trim();
+    if (title.length < 2 || title.length > 80) {
+      setUpdateError("Give the work a title between 2 and 80 characters.");
+      return;
+    }
+    if (description.length < 10 || description.length > 2000) {
+      setUpdateError("Describe the work in 10–2000 characters.");
+      return;
+    }
+    if (!isValidDownloadUrl(downloadUrl)) {
+      setUpdateError("The download link must be a direct https:// URL.");
+      return;
+    }
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      const res = await fetch("/api/my-works", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({
+          action: "update-request",
+          id: updateWork.id,
+          title,
+          description,
+          downloadUrl,
+        }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && json?.ok) {
+        setUpdateOpen(false);
+        setUpdateWork(null);
+        await loadDashboard(auth.token);
+        return;
+      }
+      setUpdateError(json?.error || "The update request didn't go through — try again.");
+    } catch {
+      setUpdateError("Network error — the update request didn't go through.");
+    }
+    setUpdateBusy(false);
+  };
+
+  const submitRemove = async () => {
+    if (!removeWork || removeBusy || !auth?.token) return;
+    setRemoveBusy(true);
+    try {
+      const res = await fetch("/api/my-works", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ action: "remove", id: removeWork.id }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && json?.ok) {
+        setRemoveWork(null);
+        await loadDashboard(auth.token);
+        return;
+      }
+      setUpdateError(json?.error || "The removal didn't go through — try again.");
+    } catch {
+      setUpdateError("Network error — the removal didn't go through.");
+    }
+    setRemoveBusy(false);
+  };
+
+  const openNewTicket = async () => {
+    if (ticketBusy || !auth?.token) return;
+    setTicketBusy(true);
+    setTicketError(null);
+    const result = await createTicket(auth.token, auth.username, {
+      subject: "Support request",
+      context: "general",
+    });
+    setTicketBusy(false);
+    if (result.ok && result.url) {
+      router.push(result.url);
+      return;
+    }
+    setTicketError(result.error || "Couldn't open a ticket — try again in a moment.");
+  };
 
   const connectGithub = async () => {
     if (connecting) return;
@@ -347,6 +536,80 @@ export function DeveloperDashboard() {
               {connectError}
             </p>
           ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // ------------------------------------------------ blocked (sus / ban)
+  // A suspended or banned account can still open the dashboard — but sees
+  // the reason, the end of a suspension and an appeal button instead of
+  // any works data. The appeal opens a private, end-to-end-encrypted
+  // support ticket chat and lands the developer straight in it.
+  if (profile?.modState === "suspended" || profile?.modState === "banned") {
+    const banned = profile.modState === "banned";
+    const until = profile.modUntil ? fmtUntil(profile.modUntil) : "";
+    const openAppeal = async () => {
+      if (ticketBusy || !auth?.token) return;
+      setTicketBusy(true);
+      setTicketError(null);
+      const result = await createTicket(auth.token, auth.username, {
+        subject: banned ? "Appeal — account ban" : "Appeal — account suspension",
+        context: banned ? "account-banned" : "account-suspended",
+      });
+      setTicketBusy(false);
+      if (result.ok && result.url) {
+        router.push(result.url);
+        return;
+      }
+      setTicketError(result.error || "Couldn't open the appeal — try again in a moment.");
+    };
+    return (
+      <div className="relative mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 -top-40 mx-auto size-[420px] rounded-full bg-red-500/10 blur-3xl"
+        />
+        <div className="relative mx-auto max-w-xl rounded-2xl border bg-card p-6 text-center sm:p-10">
+          <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-600 dark:text-red-400">
+            <ShieldAlert className="size-6" aria-hidden="true" />
+          </span>
+          <h1 className="mt-5 text-2xl font-bold tracking-tight">
+            {banned ? "Account banned" : "Account suspended"}
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+            Your developer account doesn&apos;t have access to the dashboard right now.
+            {banned
+              ? " Bans don't expire — you can appeal the decision below."
+              : until
+                ? ` This suspension ends automatically on ${until} — your works stay live in the meantime.`
+                : " Your works stay live in the meantime."}
+          </p>
+          {profile.modReason ? (
+            <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-left">
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
+                Reason given by the review
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-foreground/90">{profile.modReason}</p>
+            </div>
+          ) : null}
+          <div className="mt-6 flex justify-center">
+            <Button onClick={() => void openAppeal()} disabled={ticketBusy}>
+              {ticketBusy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <LifeBuoy className="size-4" aria-hidden="true" />
+              )}
+              {ticketBusy ? "Opening your appeal chat…" : "Appeal this decision"}
+            </Button>
+          </div>
+          {ticketError ? (
+            <p className="mt-4 text-xs text-destructive" role="alert">{ticketError}</p>
+          ) : null}
+          <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
+            The appeal opens a private chat with the Orthotopy team. Messages
+            are end-to-end encrypted — only you and the team can read them.
+          </p>
         </div>
       </div>
     );
@@ -522,7 +785,19 @@ export function DeveloperDashboard() {
             <ul className="mt-4 divide-y divide-border/60">
               {works.map((work) => {
                 const color = workColor(work.id);
-                const pending = work.status === "pending";
+                const status = work.status;
+                const statusBadge =
+                  status === "pending"
+                    ? { label: "Pending review", cls: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400" }
+                    : status === "approved"
+                      ? { label: "Live", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" }
+                      : status === "taken_down"
+                        ? { label: "Taken down", cls: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400" }
+                        : status === "suspended"
+                          ? { label: "Suspended", cls: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400" }
+                          : status === "banned"
+                            ? { label: "Banned", cls: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400" }
+                            : { label: status.replace("-", " ") || "Unknown", cls: "border-border bg-muted text-muted-foreground" };
                 return (
                   <li key={work.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
                     <span
@@ -537,16 +812,30 @@ export function DeveloperDashboard() {
                           {work.description || work.tagline}
                         </p>
                       ) : null}
+                      {work.pendingUpdate ? (
+                        <p className="mt-0.5 truncate text-xs text-sky-600 dark:text-sky-400">
+                          Update request: &ldquo;{work.pendingUpdate.title}&rdquo; — awaiting review
+                        </p>
+                      ) : null}
+                      {work.status === "suspended" && work.suspendedUntil ? (
+                        <p className="mt-0.5 truncate text-xs text-orange-600 dark:text-orange-400">
+                          Back live automatically on {fmtUntil(work.suspendedUntil)}
+                        </p>
+                      ) : null}
+                      {work.modNote && ["taken_down", "suspended", "banned"].includes(work.status) ? (
+                        <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">
+                          Review note: {work.modNote}
+                        </p>
+                      ) : null}
                     </div>
-                    {pending ? (
-                      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                        Pending review
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusBadge.cls}`}>
+                      {statusBadge.label}
+                    </span>
+                    {work.pendingUpdate ? (
+                      <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
+                        Update request
                       </span>
-                    ) : (
-                      <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                        Live
-                      </span>
-                    )}
+                    ) : null}
                     <span
                       className="rounded-full border px-2 py-0.5 text-[11px] font-medium"
                       style={{ borderColor: `${color}55`, color }}
@@ -561,6 +850,39 @@ export function DeveloperDashboard() {
                     <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
                       <Download className="size-3.5" aria-hidden="true" />
                       {work.downloads.toLocaleString("en-US")}
+                    </span>
+                    <span className="flex shrink-0 gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs"
+                        disabled={
+                          work.pendingUpdate !== null ||
+                          work.status !== "approved" ||
+                          dataState === "loading"
+                        }
+                        title={
+                          work.pendingUpdate
+                            ? "An update request is already awaiting review"
+                            : work.status !== "approved"
+                              ? "Only live works can be updated"
+                              : "Update title, description and download link"
+                        }
+                        onClick={() => openUpdateDialog(work)}
+                      >
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                        Update
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={dataState === "loading"}
+                        onClick={() => setRemoveWork(work)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                        Remove
+                      </Button>
                     </span>
                   </li>
                 );
@@ -581,6 +903,74 @@ export function DeveloperDashboard() {
             Live counts — each work keeps its color across the list and both graphs.
           </p>
         ) : null}
+
+        {/* Support tickets — linked, private, encrypted chats */}
+        <div className="mt-8 rounded-2xl border bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Support tickets</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Private chats with the review — appeals, issues, questions.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => void openNewTicket()} disabled={ticketBusy}>
+              {ticketBusy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <LifeBuoy className="size-4" aria-hidden="true" />
+              )}
+              New support ticket
+            </Button>
+          </div>
+          {ticketError ? (
+            <p className="mt-3 text-xs text-destructive" role="alert">{ticketError}</p>
+          ) : null}
+          {tickets.length === 0 ? (
+            <p className="mt-4 rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">
+              No tickets yet — if you ever need to appeal a decision or ask
+              for help, open one here.
+            </p>
+          ) : (
+            <ul className="mt-4 divide-y divide-border/60">
+              {tickets.map((ticket) => (
+                <li key={ticket.id} className="flex flex-wrap items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                  <LifeBuoy className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <a
+                      className="truncate text-sm font-medium underline-offset-2 hover:underline"
+                      href={`/support/${ticket.id}`}
+                    >
+                      {ticket.subject || ticket.id}
+                    </a>
+                    <p className="truncate text-xs text-muted-foreground">
+                      opened{" "}
+                      {ticket.createdAt
+                        ? new Date(ticket.createdAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })
+                        : "—"}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                      ticket.status === "open"
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        : ticket.status === "answered"
+                          ? "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                          : "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400"
+                    }`}
+                  >
+                    {ticket.status}
+                  </span>
+                  <Button asChild size="sm" variant="outline" className="h-7 px-2 text-xs">
+                    <a href={`/support/${ticket.id}`}>Open chat</a>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {/* Monetization — placeholder card, nothing wired up */}
         <div className="mt-8 rounded-2xl border border-dashed bg-card/40 p-6 sm:p-10">
@@ -638,6 +1028,100 @@ export function DeveloperDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Update request dialog — the live listing keeps running until the
+          review approves or discards the change. */}
+      <Dialog open={updateOpen} onOpenChange={setUpdateOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Update “{updateWork?.title}”</DialogTitle>
+            <DialogDescription>
+              Your changes go to the review as an update request — the live
+              listing stays unchanged until they&apos;re approved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="update-title">Title</Label>
+              <Input
+                id="update-title"
+                value={updateForm.title}
+                maxLength={80}
+                onChange={(event) => setUpdateForm((f) => ({ ...f, title: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="update-description">Description</Label>
+              <Textarea
+                id="update-description"
+                rows={5}
+                maxLength={2000}
+                value={updateForm.description}
+                onChange={(event) => setUpdateForm((f) => ({ ...f, description: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="update-download">Download link</Label>
+              <Input
+                id="update-download"
+                placeholder="https://github.com/you/your-repo/releases/…"
+                value={updateForm.downloadUrl}
+                onChange={(event) => setUpdateForm((f) => ({ ...f, downloadUrl: event.target.value }))}
+              />
+            </div>
+            {updateError ? (
+              <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+                {updateError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUpdateOpen(false)} disabled={updateBusy}>
+              Cancel
+            </Button>
+            <Button onClick={() => void submitUpdate()} disabled={updateBusy || !updateForm.title.trim() || !updateForm.description.trim() || !updateForm.downloadUrl.trim()}>
+              {updateBusy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Pencil className="size-4" aria-hidden="true" />
+              )}
+              Submit update request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove confirmation */}
+      <AlertDialog
+        open={removeWork !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveWork(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{removeWork?.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The work comes off your dashboard and the public catalog right
+              away, together with its stats. This cannot be undone — you can
+              always publish it again from scratch.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={removeBusy}
+              onClick={(event) => {
+                event.preventDefault();
+                void submitRemove();
+              }}
+            >
+              {removeBusy ? "Removing…" : "Remove work"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

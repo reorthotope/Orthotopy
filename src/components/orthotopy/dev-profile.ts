@@ -26,6 +26,12 @@ export interface DevProfile {
   githubEmail: string | null;
   starred: boolean;
   publishAccess: boolean;
+  /** Moderation state: 'ok' | 'suspended' | 'banned'. */
+  modState: "ok" | "suspended" | "banned";
+  /** Why the account was suspended/banned — shown on the blocked screen. */
+  modReason: string;
+  /** When a suspension auto-ends (ISO), or null for bans. */
+  modUntil: string | null;
 }
 
 export interface DevAuth {
@@ -87,6 +93,7 @@ export function clearAuth() {
 }
 
 function normalizeProfile(raw: Partial<DevProfile> | null | undefined): DevProfile {
+  const modState = raw?.modState === "suspended" || raw?.modState === "banned" ? raw.modState : "ok";
   return {
     githubConnected: Boolean(raw?.githubConnected),
     githubUsername: raw?.githubUsername || null,
@@ -94,6 +101,9 @@ function normalizeProfile(raw: Partial<DevProfile> | null | undefined): DevProfi
     githubEmail: raw?.githubEmail || null,
     starred: Boolean(raw?.starred),
     publishAccess: Boolean(raw?.publishAccess),
+    modState,
+    modReason: raw?.modReason || "",
+    modUntil: raw?.modUntil || null,
   };
 }
 

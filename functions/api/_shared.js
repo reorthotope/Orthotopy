@@ -189,7 +189,8 @@ export async function getSessionUser(env, request) {
   try {
     return await primaryDb(env).prepare(
       `SELECT u.username, u.github_id, u.github_name, u.github_email,
-              u.starred_at, u.publish_access, u.created_at, u.last_login_at
+              u.starred_at, u.publish_access, u.created_at, u.last_login_at,
+              u.mod_state, u.mod_reason, u.mod_until
        FROM sessions s JOIN users u ON u.username = s.username
        WHERE s.token = ?1 AND s.expires_at > ?2
        LIMIT 1`
@@ -199,6 +200,77 @@ export async function getSessionUser(env, request) {
   } catch {
     return null;
   }
+}
+
+/**
+ * True when the x-apex-token header holds a live console session (a 12-hour
+ * opaque KV token minted by POST /api/apex action "login"). Shared by the
+ * apex endpoint and by the support-thread endpoints, where a console
+ * session grants staff access to an appeal chat.
+ */
+export async function apexSessionValid(env, request) {
+  if (!env?.CODES || typeof env.CODES.get !== "function") return false;
+  const provided = String(request.headers.get("x-apex-token") ?? "").trim();
+  if (!provided || provided.length > 200) return false;
+  try {
+    const value = await env.CODES.get(`apex:session:${provided}`);
+    return Boolean(value);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolves the moderation state of an account row (mod_state / mod_reason /
+ * mod_until) into a normalized shape every endpoint can act on:
+ *   { state: 'ok' | 'suspended' | 'banned', reason, until, blocked, expired }
+ *
+ * A suspension whose date+time has passed resolves to 'ok' (blocked=false,
+ * expired=true) — the account auto-un-suspends on its next dashboard visit;
+ * endpoints may then lazily clear the columns (profile.js does).
+ */
+export function resolveModState(user) {
+  const state = String(user?.mod_state || "ok");
+  const reason = String(user?.mod_reason || "");
+  const until = user?.mod_until ? String(user.mod_until) : "";
+  if (state !== "suspended" && state !== "banned") {
+    return { state: "ok", reason: "", until: null, blocked: false, expired: false };
+  }
+  if (state === "suspended" && until && until <= new Date().toISOString()) {
+    return { state: "ok", reason: "", until: null, blocked: false, expired: true };
+  }
+  return { state, reason, until: until || null, blocked: true, expired: false };
+}
+
+/** 403-shaped response payload for a moderated account, for json(). */
+export function modErrorResponse(mod) {
+  const label = mod.state === "banned" ? "banned" : "suspended";
+  const until = mod.until ? ` until ${mod.until}` : "";
+  return json(
+    {
+      error: `Your account is ${label}${until}. You can still open your dashboard to see the details and appeal.`,
+      mod: { state: mod.state, reason: mod.reason, until: mod.until },
+    },
+    403
+  );
+}
+
+/**
+ * Validates an incoming encrypted-support-message blob. Messages are
+ * END-TO-END encrypted in the browser (AES-256-GCM, key derived per ticket
+ * from the ticket's secret link) — this server stores the opaque ciphertext
+ * and never sees plaintext. The blob format is versioned so the client can
+ * evolve it:  "v1:<iv base64>:<ciphertext base64>".
+ */
+export function isValidMessageCipher(raw) {
+  const value = String(raw ?? "");
+  if (!value.startsWith("v1:") || value.length < 12 || value.length > 12000) return false;
+  const parts = value.split(":");
+  if (parts.length !== 3) return false;
+  const [, iv, ct] = parts;
+  // WebCrypto's AES-GCM default IV is 12 bytes — exactly 16 unpadded base64
+  // chars. Accept optional stray padding but require the 16-char body.
+  return /^[A-Za-z0-9+/]{16}=*$/.test(iv) && /^[A-Za-z0-9+/]+=*$/.test(ct);
 }
 
 /**
@@ -279,7 +351,13 @@ export async function ensureProfileSchema(env) {
       repo_name TEXT NOT NULL DEFAULT '',
       download_url TEXT NOT NULL DEFAULT '',
       images TEXT NOT NULL DEFAULT '[]',
-      reviewed_at TEXT
+      reviewed_at TEXT,
+      pending_title TEXT NOT NULL DEFAULT '',
+      pending_description TEXT NOT NULL DEFAULT '',
+      pending_download_url TEXT NOT NULL DEFAULT '',
+      pending_requested_at TEXT,
+      suspended_until TEXT,
+      mod_note TEXT NOT NULL DEFAULT ''
     )`
   ).run();
   await env.DB.prepare(
@@ -314,6 +392,12 @@ export async function ensureProfileSchema(env) {
     ["images", "ALTER TABLE works ADD COLUMN images TEXT NOT NULL DEFAULT '[]'"],
     ["logo_file", "ALTER TABLE works ADD COLUMN logo_file TEXT NOT NULL DEFAULT ''"],
     ["reviewed_at", "ALTER TABLE works ADD COLUMN reviewed_at TEXT"],
+    ["pending_title", "ALTER TABLE works ADD COLUMN pending_title TEXT NOT NULL DEFAULT ''"],
+    ["pending_description", "ALTER TABLE works ADD COLUMN pending_description TEXT NOT NULL DEFAULT ''"],
+    ["pending_download_url", "ALTER TABLE works ADD COLUMN pending_download_url TEXT NOT NULL DEFAULT ''"],
+    ["pending_requested_at", "ALTER TABLE works ADD COLUMN pending_requested_at TEXT"],
+    ["suspended_until", "ALTER TABLE works ADD COLUMN suspended_until TEXT"],
+    ["mod_note", "ALTER TABLE works ADD COLUMN mod_note TEXT NOT NULL DEFAULT ''"],
   ]) {
     if ((await probeWorksColumn(env, col)) === true) continue;
     try {
@@ -356,6 +440,44 @@ export async function ensureProfileSchema(env) {
     "CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status)"
   ).run();
 
+  // Appeal / support chat threads. Each thread's id IS its secret link:
+  // "appeal-<username><8 random digits>" (e.g. appeal-pixelwork48291057),
+  // generated by POST /api/support-threads and guaranteed unique by probe —
+  // every new ticket gets a link that has never existed before. The owner
+  // opens /support/<id> to reach the chat; the /apex console reaches the
+  // same chat with its console session. Messages live in support_messages
+  // and are end-to-end encrypted client-side (AES-256-GCM with a key
+  // derived from the ticket id) — this database only ever stores ciphertext.
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS support_threads (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      context TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_support_threads_username ON support_threads(username)"
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_support_threads_status ON support_threads(status)"
+  ).run();
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS support_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_support_messages_thread ON support_messages(thread_id, created_at)"
+  ).run();
+
   // User reports — public intake via POST /api/report (a work or a user,
   // with a reason), triaged in /apex. Resolving can remove the reported
   // work from the catalog (status 'rejected').
@@ -391,7 +513,10 @@ export async function ensureProfileSchema(env) {
         starred_at TEXT,
         publish_access INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
-        last_login_at TEXT
+        last_login_at TEXT,
+        mod_state TEXT NOT NULL DEFAULT 'ok',
+        mod_reason TEXT NOT NULL DEFAULT '',
+        mod_until TEXT
       )`
     ).run();
     schemaReady = true;
@@ -466,7 +591,10 @@ export async function ensureProfileSchema(env) {
         starred_at TEXT,
         publish_access INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
-        last_login_at TEXT
+        last_login_at TEXT,
+        mod_state TEXT NOT NULL DEFAULT 'ok',
+        mod_reason TEXT NOT NULL DEFAULT '',
+        mod_until TEXT
       )`
     ).run();
     const inserts = values.map((v) =>
@@ -506,6 +634,9 @@ export async function ensureProfileSchema(env) {
     ["starred_at", "ALTER TABLE users ADD COLUMN starred_at TEXT"],
     ["publish_access", "ALTER TABLE users ADD COLUMN publish_access INTEGER NOT NULL DEFAULT 0"],
     ["created_at", "ALTER TABLE users ADD COLUMN created_at TEXT"],
+    ["mod_state", "ALTER TABLE users ADD COLUMN mod_state TEXT NOT NULL DEFAULT 'ok'"],
+    ["mod_reason", "ALTER TABLE users ADD COLUMN mod_reason TEXT NOT NULL DEFAULT ''"],
+    ["mod_until", "ALTER TABLE users ADD COLUMN mod_until TEXT"],
   ]) {
     if ((await probeColumn(env, col)) === true) continue;
     try {

@@ -29,10 +29,12 @@ import {
   githubTokenKey,
   json,
   primaryDb,
+  resolveModState,
 } from "./_shared.js";
 
 function profilePayload(row) {
   const connected = Boolean(row.last_login_at);
+  const mod = resolveModState(row);
   return {
     username: row.username,
     // Kept for the navbar avatar: the login IS the GitHub identity.
@@ -44,6 +46,12 @@ function profilePayload(row) {
     // Publishing unlocks with the verified GitHub identity — the OAuth
     // authorization IS the access (set on every sign-in).
     publishAccess: row.publish_access === 1 || connected,
+    // Moderation state: suspended/banned accounts can still open the
+    // dashboard — it shows the reason, the end of a suspension and the
+    // appeal button instead of the works data.
+    modState: mod.state,
+    modReason: mod.reason,
+    modUntil: mod.until,
   };
 }
 
@@ -67,6 +75,21 @@ async function requireUser(env, request) {
 export async function onRequestGet({ request, env }) {
   const { user, error } = await requireUser(env, request);
   if (error) return error;
+  // A suspension whose date+time has passed auto-ends here: clear the
+  // columns once so the account is fully 'ok' again from then on.
+  const mod = resolveModState(user);
+  if (mod.expired) {
+    try {
+      await primaryDb(env)
+        .prepare(
+          "UPDATE users SET mod_state = 'ok', mod_reason = '', mod_until = NULL WHERE username = ?1 AND mod_state = 'suspended'"
+        )
+        .bind(user.username)
+        .run();
+    } catch {
+      // Lazily retried on the next visit — never block the profile read.
+    }
+  }
   return json({ ok: true, profile: profilePayload(user) });
 }
 

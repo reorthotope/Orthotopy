@@ -1,4 +1,5 @@
 import {
+  apexSessionValid,
   clientIp,
   ensureProfileSchema,
   generateToken,
@@ -13,8 +14,11 @@ import { repoImageUrl } from "./_gh-repo.js";
  * POST /api/apex — the whole backend of the /apex control console.
  *
  * /apex is the site owner's private admin surface: a dashboard, the review
- * queue for published works (the same queue POST /api/works feeds), a CRM
- * over every developer account, support tickets and user reports.
+ * queue for published works (the same queue POST /api/works feeds), the
+ * all-works catalog manager (moderation: takedown / suspend / ban / delete
+ * plus update-request decisions, with per-work view & download counts), a
+ * CRM over every developer account (publish access + suspend / ban /
+ * delete), support tickets, appeal chat threads and user reports.
  *
  * Auth model — the passcode never lives in the browser:
  *   1. The console sends { action: "login", passcode }. The passcode is
@@ -34,11 +38,20 @@ import { repoImageUrl } from "./_gh-repo.js";
  *   overview                                           → dashboard stats + series + recents
  *   review-list  { }                                   → pending works queue
  *   review-decide{ id, decision: "approve"|"reject" }  → decide one work
+ *   works-list   { status?, type?, q? }                → every work + per-work stats
+ *   work-moderate{ id, action: "takedown"|"suspend"|"ban"|"delete"|"restore"
+ *                     |"approve-update"|"reject-update",
+ *                  until?, reason? }                   → moderate one work
  *   crm-list     { q? }                                → developer accounts + work counts
  *   crm-update   { username, publishAccess }           → grant / revoke publish access
+ *   crm-suspend  { username, reason, until? }          → temp suspension (auto-ends)
+ *   crm-ban      { username, reason }                  → permanent ban (works → review)
+ *   crm-restore  { username }                          → end suspension / unban
  *   crm-delete   { username }                          → wipe account + works + sessions
  *   tickets-list { status? }                           → support tickets, newest first
  *   ticket-update{ id, status?, priority?, adminNote? } → triage one ticket
+ *   threads-list { status? }                           → appeal chat threads
+ *   thread-update{ id, status? }                       → close / reopen a thread
  *   reports-list { status? }                           → user reports, newest first
  *   report-update{ id, status?, adminNote? }           → resolve / dismiss a report
  *   report-remove-work { id }                          → reject the reported work + resolve
@@ -51,7 +64,20 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours per console session
 
 const TICKET_STATUSES = ["open", "answered", "closed"];
 const TICKET_PRIORITIES = ["low", "normal", "high"];
+const THREAD_STATUSES = ["open", "answered", "closed"];
 const REPORT_STATUSES = ["open", "resolved", "dismissed"];
+const WORK_MOD_ACTIONS = ["takedown", "suspend", "ban", "delete", "restore", "approve-update", "reject-update"];
+
+/** Normalizes an incoming suspend deadline (datetime-local string, ISO or
+ * "YYYY-MM-DD HH:MM") to an ISO-8601 UTC string, or null when invalid. */
+function parseDeadline(raw) {
+  const value = String(raw ?? "").trim();
+  if (!value) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(value) ? `${value.replace(" ", "T")}:00Z` : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
 
 // ------------------------------------------------------------------ helpers
 
@@ -61,17 +87,7 @@ async function sha256Hex(text) {
 }
 
 /** True when the x-apex-token header holds a live console session. */
-async function sessionValid(env, request) {
-  if (!env.CODES || typeof env.CODES.get !== "function") return false;
-  const provided = String(request.headers.get("x-apex-token") ?? "").trim();
-  if (!provided || provided.length > 200) return false;
-  try {
-    const value = await env.CODES.get(`apex:session:${provided}`);
-    return Boolean(value);
-  } catch {
-    return false;
-  }
-}
+const sessionValid = (env, request) => apexSessionValid(env, request);
 
 /** SQLite datetime('now') vs ISO mixes — normalize for JSON output. */
 function normalizeTimestamp(raw) {
@@ -170,7 +186,7 @@ export async function onRequestPost({ request, env }) {
 
       // ---------------------------------------------------- dashboard
       case "overview": {
-        const [usersRow, accessRow, newUsersRow, worksRow, statsRow, ticketsRow, reportsRow] =
+        const [usersRow, accessRow, newUsersRow, worksRow, statsRow, ticketsRow, reportsRow, threadsRow] =
           await Promise.all([
             db.prepare("SELECT COUNT(*) AS n FROM users").first(),
             db
@@ -187,7 +203,9 @@ export async function onRequestPost({ request, env }) {
                 `SELECT COUNT(*) AS total,
                         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
                         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
-                        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+                        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+                        SUM(CASE WHEN status IN ('taken_down', 'suspended', 'banned') THEN 1 ELSE 0 END) AS moderated,
+                        SUM(CASE WHEN pending_requested_at IS NOT NULL THEN 1 ELSE 0 END) AS updateRequests
                  FROM works`
               )
               .first(),
@@ -204,6 +222,11 @@ export async function onRequestPost({ request, env }) {
             db
               .prepare(
                 "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open FROM user_reports"
+              )
+              .first(),
+            db
+              .prepare(
+                "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open FROM support_threads"
               )
               .first(),
           ]);
@@ -253,6 +276,8 @@ export async function onRequestPost({ request, env }) {
               pending: Number(worksRow?.pending ?? 0),
               approved: Number(worksRow?.approved ?? 0),
               rejected: Number(worksRow?.rejected ?? 0),
+              moderated: Number(worksRow?.moderated ?? 0),
+              updateRequests: Number(worksRow?.updateRequests ?? 0),
             },
             stats: {
               views: Number(statsRow?.views ?? 0),
@@ -261,6 +286,10 @@ export async function onRequestPost({ request, env }) {
             tickets: {
               total: Number(ticketsRow?.total ?? 0),
               open: Number(ticketsRow?.open ?? 0),
+            },
+            threads: {
+              total: Number(threadsRow?.total ?? 0),
+              open: Number(threadsRow?.open ?? 0),
             },
             reports: {
               total: Number(reportsRow?.total ?? 0),
@@ -336,12 +365,186 @@ export async function onRequestPost({ request, env }) {
         return json({ ok: true, id, status });
       }
 
+      // ----------------------------------------------------- all works
+      // The catalog manager: every work of every status with its per-work
+      // view & download counts (work_stats_daily aggregates) — these counts
+      // are shown here only, never on the public storefront.
+      case "works-list": {
+        const status = cleanText(body?.status, 20);
+        const res = await db
+          .prepare(
+            `SELECT w.id, w.username, w.title, w.tagline, w.description, w.type, w.platform,
+                    w.status, w.created_at, w.repo_url, w.download_url,
+                    w.pending_title, w.pending_description, w.pending_download_url,
+                    w.pending_requested_at, w.suspended_until, w.mod_note,
+                    COALESCE(SUM(s.views), 0) AS views,
+                    COALESCE(SUM(s.downloads), 0) AS downloads
+             FROM works w
+             LEFT JOIN work_stats_daily s ON s.work_id = w.id
+             ${status ? "WHERE w.status = ?1" : ""}
+             GROUP BY w.id
+             ORDER BY w.created_at DESC, w.id ASC
+             LIMIT 400`
+          )
+          .bind(...(status ? [status] : []))
+          .all();
+        const type = cleanText(body?.type, 20);
+        const q = cleanText(body?.q, 80).toLowerCase();
+        const works = (res?.results ?? []).map((r) => ({
+          id: str(r.id),
+          username: str(r.username),
+          title: str(r.title),
+          type: str(r.type),
+          platform: str(r.platform),
+          description: str(r.description),
+          status: str(r.status),
+          repoUrl: r.repo_url ? str(r.repo_url) : "",
+          downloadUrl: r.download_url ? str(r.download_url) : "",
+          pendingUpdate:
+            r.pending_requested_at
+              ? {
+                  title: str(r.pending_title),
+                  description: str(r.pending_description),
+                  downloadUrl: str(r.pending_download_url),
+                  requestedAt: normalizeTimestamp(r.pending_requested_at),
+                }
+              : null,
+          suspendedUntil: r.suspended_until ? str(r.suspended_until) : null,
+          modNote: str(r.mod_note),
+          views: Number(r.views ?? 0),
+          downloads: Number(r.downloads ?? 0),
+          createdAt: normalizeTimestamp(r.created_at),
+        }));
+        // Type / "others" and free-text filters are applied in JS — "others"
+        // covers anything that isn't Apps, Games or Extensions.
+        const filtered = works.filter((w) => {
+          if (type === "apps" && w.type !== "Apps") return false;
+          if (type === "games" && w.type !== "Games") return false;
+          if (type === "extensions" && w.type !== "Extensions") return false;
+          if (type === "others" && ["Apps", "Games", "Extensions"].includes(w.type)) return false;
+          if (q && !(w.title.toLowerCase().includes(q) || w.username.toLowerCase().includes(q) || w.id.toLowerCase().includes(q))) {
+            return false;
+          }
+          return true;
+        });
+        return json({ ok: true, works: filtered });
+      }
+
+      case "work-moderate": {
+        const id = cleanText(body?.id, 120);
+        // The verb rides in `modAction` — `action` is the endpoint action.
+        const modAction = str(body?.modAction);
+        if (!id) return json({ error: "Missing work id." }, 400);
+        if (!WORK_MOD_ACTIONS.includes(modAction)) {
+          return json({ error: "Unknown moderation action." }, 400);
+        }
+        const reason = cleanText(body?.reason, 500);
+        const current = await db
+          .prepare("SELECT id, status FROM works WHERE id = ?1 LIMIT 1")
+          .bind(id)
+          .first();
+        if (!current) return json({ error: "No work with that id." }, 404);
+
+        if (modAction === "delete") {
+          await db.batch([
+            db.prepare("DELETE FROM work_stats_daily WHERE work_id = ?1").bind(id),
+            db.prepare("DELETE FROM works WHERE id = ?1").bind(id),
+          ]);
+          return json({ ok: true, id, action: modAction, deleted: true });
+        }
+
+        if (modAction === "suspend") {
+          // Temporary: hidden until the given date+time, then auto-restored
+          // by the next public catalog read (GET /api/works).
+          const until = parseDeadline(body?.until);
+          if (!until) {
+            return json({ error: "Give a valid suspend date and time." }, 400);
+          }
+          if (until <= new Date().toISOString()) {
+            return json({ error: "The suspend date+time must be in the future." }, 400);
+          }
+          await db
+            .prepare(
+              "UPDATE works SET status = 'suspended', suspended_until = ?1, mod_note = ?2 WHERE id = ?3"
+            )
+            .bind(until, reason, id)
+            .run();
+          return json({ ok: true, id, action: modAction, status: "suspended", suspendedUntil: until });
+        }
+
+        if (modAction === "restore") {
+          await db
+            .prepare(
+              "UPDATE works SET status = 'approved', suspended_until = '', mod_note = '', reviewed_at = ?1 WHERE id = ?2"
+            )
+            .bind(new Date().toISOString(), id)
+            .run();
+          return json({ ok: true, id, action: modAction, status: "approved" });
+        }
+
+        if (modAction === "approve-update") {
+          // Apply the developer's pending edit to the live listing, then
+          // clear the request.
+          const pending = await db
+            .prepare(
+              "SELECT pending_title, pending_description, pending_download_url, pending_requested_at FROM works WHERE id = ?1"
+            )
+            .bind(id)
+            .first();
+          if (!pending?.pending_requested_at) {
+            return json({ error: "That work has no update request pending." }, 404);
+          }
+          await db
+            .prepare(
+              `UPDATE works
+               SET title = COALESCE(NULLIF(pending_title, ''), title),
+                   description = COALESCE(NULLIF(pending_description, ''), description),
+                   download_url = COALESCE(NULLIF(pending_download_url, ''), download_url),
+                   pending_title = '', pending_description = '',
+                   pending_download_url = '', pending_requested_at = NULL,
+                   reviewed_at = ?1
+               WHERE id = ?2`
+            )
+            .bind(new Date().toISOString(), id)
+            .run();
+          return json({ ok: true, id, action: modAction, status: "approved" });
+        }
+
+        if (modAction === "reject-update") {
+          const cleared = await db
+            .prepare(
+              `UPDATE works
+               SET pending_title = '', pending_description = '',
+                   pending_download_url = '', pending_requested_at = NULL
+               WHERE id = ?1 AND pending_requested_at IS NOT NULL`
+            )
+            .bind(id)
+            .run();
+          if (!Number(cleared?.meta?.changes ?? 0)) {
+            return json({ error: "That work has no update request pending." }, 404);
+          }
+          return json({ ok: true, id, action: modAction, status: str(current.status) });
+        }
+
+        // takedown / ban — both hide the work permanently (restorable only
+        // by the admin "restore" action); delete above removes the row.
+        const hiddenStatus = modAction === "ban" ? "banned" : "taken_down";
+        await db
+          .prepare(
+            "UPDATE works SET status = ?1, suspended_until = '', mod_note = ?2, reviewed_at = ?3 WHERE id = ?4"
+          )
+          .bind(hiddenStatus, reason, new Date().toISOString(), id)
+          .run();
+        return json({ ok: true, id, action: modAction, status: hiddenStatus });
+      }
+
       // ----------------------------------------------------------- CRM
       case "crm-list": {
         const q = cleanText(body?.q, 80).toLowerCase();
         const res = await db.prepare(
           `SELECT u.username, u.github_name, u.github_email, u.starred_at,
                   u.publish_access, u.created_at, u.last_login_at,
+                  u.mod_state, u.mod_reason, u.mod_until,
                   COUNT(w.id) AS works_total,
                   COALESCE(SUM(CASE WHEN w.status = 'approved' THEN 1 ELSE 0 END), 0) AS works_live
            FROM users u LEFT JOIN works w ON w.username = u.username
@@ -358,6 +561,9 @@ export async function onRequestPost({ request, env }) {
             publishAccess: Number(r.publish_access) === 1,
             createdAt: normalizeTimestamp(r.created_at),
             lastLoginAt: normalizeTimestamp(r.last_login_at),
+            modState: str(r.mod_state, "ok"),
+            modReason: str(r.mod_reason),
+            modUntil: r.mod_until ? str(r.mod_until) : null,
             worksTotal: Number(r.works_total ?? 0),
             worksLive: Number(r.works_live ?? 0),
           }))
@@ -384,6 +590,80 @@ export async function onRequestPost({ request, env }) {
           return json({ error: "No account with that username." }, 404);
         }
         return json({ ok: true, username, publishAccess: publishAccess === 1 });
+      }
+
+      case "crm-suspend": {
+        const username = cleanText(body?.username, 80);
+        const reason = cleanText(body?.reason, 500);
+        if (!username) return json({ error: "Missing username." }, 400);
+        if (!reason) return json({ error: "Give the developer a reason — they will see it." }, 400);
+        const until = parseDeadline(body?.until);
+        if (!until) {
+          return json({ error: "Give a valid suspension date and time (temporary — it auto-ends)." }, 400);
+        }
+        if (until <= new Date().toISOString()) {
+          return json({ error: "The suspension date+time must be in the future." }, 400);
+        }
+        const result = await db
+          .prepare(
+            "UPDATE users SET mod_state = 'suspended', mod_reason = ?1, mod_until = ?2 WHERE username = ?3"
+          )
+          .bind(reason, until, username)
+          .run();
+        if (!Number(result?.meta?.changes ?? 0)) {
+          return json({ error: "No account with that username." }, 404);
+        }
+        // Suspended accounts keep their works live — nothing else to change.
+        return json({ ok: true, username, modState: "suspended", until });
+      }
+
+      case "crm-ban": {
+        const username = cleanText(body?.username, 80);
+        const reason = cleanText(body?.reason, 500);
+        if (!username) return json({ error: "Missing username." }, 400);
+        if (!reason) return json({ error: "Give the developer a reason — they will see it." }, 400);
+        const result = await db
+          .prepare(
+            "UPDATE users SET mod_state = 'banned', mod_reason = ?1, mod_until = NULL WHERE username = ?2"
+          )
+          .bind(reason, username)
+          .run();
+        if (!Number(result?.meta?.changes ?? 0)) {
+          return json({ error: "No account with that username." }, 404);
+        }
+        // Banned accounts' live works go back into the review queue; any
+        // update request still pending on them is dropped with them.
+        const pulled = await db
+          .prepare(
+            `UPDATE works
+             SET status = 'pending', reviewed_at = NULL,
+                 pending_title = '', pending_description = '',
+                 pending_download_url = '', pending_requested_at = NULL
+             WHERE username = ?1 AND status = 'approved'`
+          )
+          .bind(username)
+          .run();
+        return json({
+          ok: true,
+          username,
+          modState: "banned",
+          worksBackToReview: Number(pulled?.meta?.changes ?? 0),
+        });
+      }
+
+      case "crm-restore": {
+        const username = cleanText(body?.username, 80);
+        if (!username) return json({ error: "Missing username." }, 400);
+        const result = await db
+          .prepare(
+            "UPDATE users SET mod_state = 'ok', mod_reason = '', mod_until = NULL WHERE username = ?1 AND mod_state != 'ok'"
+          )
+          .bind(username)
+          .run();
+        if (!Number(result?.meta?.changes ?? 0)) {
+          return json({ error: "No suspended or banned account with that username." }, 404);
+        }
+        return json({ ok: true, username, modState: "ok" });
       }
 
       case "crm-delete": {
@@ -478,6 +758,63 @@ export async function onRequestPost({ request, env }) {
           )
           .run();
         return json({ ok: true, id });
+      }
+
+      // -------------------------------------- appeal / support threads
+      // Threads are created by developers (POST /api/support-threads) and
+      // chatted in from /support/<id> or right here; this console only
+      // lists and closes/reopens them. Message bodies live encrypted —
+      // the console decrypts them client-side with the thread id.
+      case "threads-list": {
+        const status = cleanText(body?.status, 20);
+        const stmt =
+          status && THREAD_STATUSES.includes(status)
+            ? db.prepare(
+                "SELECT * FROM support_threads WHERE status = ?1 ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200"
+              ).bind(status)
+            : db.prepare(
+                "SELECT * FROM support_threads ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200"
+              );
+        const res = await stmt.all();
+        const rows = res?.results ?? [];
+        const counts = await db
+          .prepare(
+            "SELECT thread_id, COUNT(*) AS n FROM support_messages GROUP BY thread_id"
+          )
+          .all();
+        const countBy = new Map((counts?.results ?? []).map((r) => [str(r.thread_id), Number(r.n ?? 0)]));
+        return json({
+          ok: true,
+          threads: rows.map((r) => ({
+            id: str(r.id),
+            username: str(r.username),
+            subject: str(r.subject),
+            context: str(r.context),
+            status: str(r.status, "open"),
+            createdAt: normalizeTimestamp(r.created_at),
+            updatedAt: normalizeTimestamp(r.updated_at),
+            messageCount: countBy.get(str(r.id)) ?? 0,
+          })),
+        });
+      }
+
+      case "thread-update": {
+        const id = cleanText(body?.id, 80);
+        if (!id) return json({ error: "Missing thread id." }, 400);
+        const status = cleanText(body?.status, 20);
+        if (!status || !THREAD_STATUSES.includes(status)) {
+          return json({ error: "Unknown thread status." }, 400);
+        }
+        const result = await db
+          .prepare(
+            "UPDATE support_threads SET status = ?1, updated_at = ?2 WHERE id = ?3"
+          )
+          .bind(status, new Date().toISOString(), id)
+          .run();
+        if (!Number(result?.meta?.changes ?? 0)) {
+          return json({ error: "No thread with that id." }, 404);
+        }
+        return json({ ok: true, id, status });
       }
 
       // -------------------------------------------------- user reports
