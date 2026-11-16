@@ -30,6 +30,11 @@ async function serveAsset(env, request, path, status) {
 
 export async function onRequestGet({ request, env, params }) {
   const slug = String(params?.slug ?? "");
+  // Pages Functions run before static assets, so the shell's own path lands
+  // here too — pass it through to the asset server.
+  if (slug.toLowerCase() === "appeal-shell") {
+    return env.ASSETS.fetch(new URL("/support/appeal-shell", request.url));
+  }
   if (!SLUG_RE.test(slug)) {
     // Not shaped like a ticket link — serve the site's real 404 page.
     return serveAsset(env, request, "/404.html", 404);
