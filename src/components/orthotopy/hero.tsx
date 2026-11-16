@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, GitCommitHorizontal, Sparkles } from "lucide-react";
+import { ArrowRight, GitCommitHorizontal, Package, Sparkles, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface HeroProps {
-  /** Distinct developers with at least one work in the catalog. */
-  activeDevelopers: number;
-  /** Distinct creators with at least one work in the catalog. */
-  activeCreators: number;
+  /** Distinct creators with at least one live work in the catalog. */
+  creators: number;
+  /** Total number of live, approved works in the catalog. */
+  worksTotal: number;
   /** False while the catalog is still loading. */
   statsReady: boolean;
   onPublish: () => void;
@@ -17,7 +17,7 @@ interface HeroProps {
 
 const REPO_API = "https://api.github.com/repos/reorthotope/Orthotopy/commits";
 
-export function Hero({ activeDevelopers, activeCreators, statsReady, onPublish }: HeroProps) {
+export function Hero({ creators, worksTotal, statsReady, onPublish }: HeroProps) {
   const [dailyCommits, setDailyCommits] = useState<number | null>(null);
 
   // Daily commits are counted live from the public GitHub API and fall back
@@ -38,10 +38,24 @@ export function Hero({ activeDevelopers, activeCreators, statsReady, onPublish }
     return () => controller.abort();
   }, []);
 
+  // Every stat is real: creators and works come from the live catalog feed,
+  // commits straight from the project repository — no fixed numbers anywhere.
   const stats = [
-    { value: statsReady ? `${activeDevelopers}` : "—", label: "active developers" },
-    { value: statsReady ? `${activeCreators}` : "—", label: "active creators" },
-    { value: dailyCommits === null ? "—" : `${dailyCommits}`, label: "daily commits" },
+    {
+      value: statsReady ? `${creators}` : "—",
+      label: "creators",
+      icon: Users,
+    },
+    {
+      value: statsReady ? `${worksTotal}` : "—",
+      label: "works published",
+      icon: Package,
+    },
+    {
+      value: dailyCommits === null ? "—" : `${dailyCommits}`,
+      label: "daily commits",
+      icon: GitCommitHorizontal,
+    },
   ];
 
   return (
@@ -90,21 +104,25 @@ export function Hero({ activeDevelopers, activeCreators, statsReady, onPublish }
             </Button>
           </div>
           <div className="mt-12 grid w-full max-w-xl grid-cols-3 divide-x divide-border rounded-2xl border bg-card/60 text-center">
-            {stats.map((stat) => (
-              <div key={stat.label} className="px-2 py-4">
-                <p className="flex items-center justify-center gap-1.5 text-xl font-semibold sm:text-2xl">
-                  {stat.label === "daily commits" ? (
-                    <GitCommitHorizontal
+            {stats.map((stat) => {
+              const Icon = stat.icon;
+              return (
+                <div key={stat.label} className="px-2 py-4">
+                  <p className="flex items-center justify-center gap-1.5 text-xl font-semibold sm:text-2xl">
+                    <Icon
                       className="size-4 text-muted-foreground sm:size-5"
                       aria-hidden="true"
                     />
-                  ) : null}
-                  {stat.value}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
-              </div>
-            ))}
+                    {stat.value}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
+                </div>
+              );
+            })}
           </div>
+          <p className="mt-3 text-xs text-muted-foreground/80">
+            Live counts — refreshed from the catalog and the repo as you browse.
+          </p>
         </motion.div>
       </div>
     </section>

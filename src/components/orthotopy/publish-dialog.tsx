@@ -306,7 +306,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
     if (scanState === "idle") {
       return (
         <p className="text-xs text-muted-foreground">
-          Paste your public repo link — github.com/yourname/your-work.
+          The work&apos;s main repository — github.com/yourname/your-work. Shown as the Source link on your listing.
         </p>
       );
     }
@@ -449,7 +449,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
                   id="work-title"
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
-                  placeholder="e.g. Hexably"
+                  placeholder="e.g. My Awesome App"
                   maxLength={80}
                   required
                 />
@@ -512,7 +512,7 @@ export function PublishDialog({ open, onOpenChange }: PublishDialogProps) {
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="work-repo">GitHub repo link</Label>
+                <Label htmlFor="work-repo">Main repo link</Label>
                 <Input
                   id="work-repo"
                   value={repoUrl}

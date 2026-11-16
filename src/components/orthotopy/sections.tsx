@@ -16,21 +16,21 @@ const STEPS: { number: string; icon: LucideIcon; title: string; description: str
     icon: FileCode2,
     title: "Describe it",
     description:
-      "Write a small work.json — title, kind, category and a link to wherever your work lives. No platform lock-in.",
+      "Open the publisher and describe your work — title, type, platform and a link to your main repo. No signup form: your GitHub identity is the account.",
   },
   {
     number: "02",
     icon: Upload,
     title: "Submit it",
     description:
-      "Use the Publish button on this page — it opens a prefilled GitHub issue with your listing, ready to merge into the open catalog.",
+      "Add a download link and send it for review. Screenshots are pulled straight from your repo — nothing to upload, nothing to host.",
   },
   {
     number: "03",
     icon: Rocket,
     title: "Get discovered",
     description:
-      "Show up in search, categories and creator pages. Your audience comes straight to you — no feed algorithms.",
+      "Once approved, your work goes live in the catalog with a Source link to your code. Your audience comes straight to you — no feed algorithms.",
   },
 ];
 
@@ -48,8 +48,8 @@ export function PublishSteps({ onPublish }: { onPublish: () => void }) {
               Publish in three steps
             </h2>
             <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
-              Listing a work costs nothing and takes minutes. The catalog lives on GitHub,
-              so every change is versioned and public.
+              Listing a work costs nothing and takes minutes. The catalog is live data —
+              every listing is a real submission, reviewed before it goes public.
             </p>
           </div>
           <Button onClick={onPublish} size="lg" className="rounded-xl">

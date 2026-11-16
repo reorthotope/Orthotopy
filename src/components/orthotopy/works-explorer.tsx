@@ -80,6 +80,31 @@ export function DownloadButton({ work, size = "sm" }: { work: Work; size?: "sm" 
   );
 }
 
+/** Compact icon button that opens the work's source repository. Orthotopy
+ * supports open source, so every listing with a repo link surfaces it right
+ * on the card — no need to open the detail view first. */
+export function SourceButton({ work }: { work: Work }) {
+  if (!work.repoUrl) return null;
+  return (
+    <Button
+      asChild
+      size="sm"
+      variant="outline"
+      className="h-8 w-8 shrink-0 rounded-lg p-0"
+    >
+      <a
+        href={work.repoUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`View the source code of ${work.title}`}
+        title="View source code"
+      >
+        <Github className="size-4" aria-hidden="true" />
+      </a>
+    </Button>
+  );
+}
+
 export function WorkCard({ work, onView }: { work: Work; onView: (work: Work) => void }) {
   const cover = work.imageUrls?.[0];
   return (
@@ -127,6 +152,7 @@ export function WorkCard({ work, onView }: { work: Work; onView: (work: Work) =>
       <CardFooter className="flex items-center justify-between gap-2">
         <span className="truncate text-xs text-muted-foreground">{work.category}</span>
         <div className="flex shrink-0 items-center gap-2">
+          <SourceButton work={work} />
           {work.downloadUrl ? <DownloadButton work={work} /> : null}
           <Button
             size="sm"

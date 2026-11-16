@@ -16,12 +16,7 @@ function HomeContent() {
   const openPublish = usePublish();
 
   const works = data ?? [];
-  const activeDevelopers = new Set(
-    works.filter((work) => work.kind === "Developer").map((work) => work.creator)
-  ).size;
-  const activeCreators = new Set(
-    works.filter((work) => work.kind === "Creator").map((work) => work.creator)
-  ).size;
+  const creators = new Set(works.map((work) => work.creator)).size;
 
   return (
     <>
@@ -32,8 +27,8 @@ function HomeContent() {
         Skip to catalog
       </a>
       <Hero
-        activeDevelopers={activeDevelopers}
-        activeCreators={activeCreators}
+        creators={creators}
+        worksTotal={works.length}
         statsReady={!isLoading}
         onPublish={openPublish}
       />
